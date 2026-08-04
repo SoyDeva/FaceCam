@@ -1,0 +1,15 @@
+{
+  "id": "white-dragon",
+  "name": "Dragón Blanco",
+  "version": "0.1.0-prototype",
+  "status": "procedural-placeholder",
+  "supportsNeck": true,
+  "supportsEyeTracking": true,
+  "supportsMouthTracking": true,
+  "targetModel": {
+    "format": "glb",
+    "coverage": "full-head-360",
+    "requiredMorphTargets": 52,
+    "lod": ["high", "medium", "low"]
+  }
+}
