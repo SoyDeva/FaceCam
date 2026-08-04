@@ -1,15 +1,23 @@
 import {
   ACESFilmicToneMapping,
+  AdditiveBlending,
   AmbientLight,
   Box3,
+  BufferGeometry,
+  CircleGeometry,
   Color,
   DirectionalLight,
+  DoubleSide,
+  Float32BufferAttribute,
   Group,
   Material,
   Mesh,
   MeshBasicMaterial,
   Object3D,
   OrthographicCamera,
+  Points,
+  PointsMaterial,
+  RingGeometry,
   Scene,
   Shape,
   ShapeGeometry,
@@ -44,8 +52,11 @@ export const DEFAULT_STATIC_DRAGON_CALIBRATION: StaticDragonCalibration = {
 }
 
 const MODEL_EYE_LINE_RATIO = 0.55
-const PRIVACY_COLOR = 0xdce4e6
-const PRIVACY_CURTAIN_COLOR = 0x101820
+const PRIVACY_COLOR = 0x07131f
+const PRIVACY_CURTAIN_COLOR = 0x07131f
+const AURA_CYAN = 0x8cecff
+const AURA_ICE = 0xd9f8ff
+const AURA_GOLD = 0xffefbd
 
 const MORPH_ALIASES = {
   jawOpen: ['jawOpen', 'mouthOpen', 'openJaw'],
@@ -73,6 +84,12 @@ interface MorphBinding {
   indices: Partial<Record<MorphSemantic, number>>
 }
 
+const MORPH_RESPONSE: Partial<Record<MorphSemantic, { gain: number; max: number }>> = {
+  jawOpen: { gain: 1.1, max: 1 },
+  blinkLeft: { gain: 1.45, max: 1.35 },
+  blinkRight: { gain: 1.45, max: 1.35 },
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -95,6 +112,35 @@ function createPrivacyShape(): Shape {
   return shape
 }
 
+function createDiamondShape(size = 0.065): Shape {
+  const shape = new Shape()
+  shape.moveTo(0, size)
+  shape.lineTo(size * 0.62, 0)
+  shape.lineTo(0, -size)
+  shape.lineTo(-size * 0.62, 0)
+  shape.closePath()
+  return shape
+}
+
+function createAuraParticles(): BufferGeometry {
+  const positions: number[] = []
+  const count = 28
+  for (let index = 0; index < count; index += 1) {
+    const angle = index / count * Math.PI * 2
+    const radius = 1.04 + (index % 4) * 0.055
+    const vertical = radius * (1.05 + (index % 3) * 0.025)
+    positions.push(
+      Math.cos(angle) * radius,
+      Math.sin(angle) * vertical,
+      -1.76,
+    )
+  }
+
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  return geometry
+}
+
 function provisionalCalibration(pose: StaticDragonPoseEstimate): StaticDragonHeadCalibration {
   return {
     version: 1,
@@ -113,7 +159,25 @@ export class StaticDragonRenderer {
   private readonly camera = new OrthographicCamera(-1, 1, 1, -1, 0.01, 20)
   private readonly modelContainer = new Group()
   private readonly privacyGroup = new Group()
+  private readonly auraGroup = new Group()
   private readonly privacyMesh: Mesh
+  private readonly auraGlow: Mesh
+  private readonly auraInnerRing: Mesh
+  private readonly auraMiddleRing: Mesh
+  private readonly auraOuterRing: Mesh
+  private readonly auraSigilRing = new Group()
+  private readonly auraParticles: Points
+  private readonly auraSigilGeometry = new ShapeGeometry(createDiamondShape(), 8)
+  private readonly auraSigilMaterial = new MeshBasicMaterial({
+    color: AURA_ICE,
+    transparent: true,
+    opacity: 0.34,
+    blending: AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    side: DoubleSide,
+  })
   private readonly distanceModel = new MonocularHeadDistanceModel()
   private readonly morphBindings: MorphBinding[] = []
   private modelRoot: Object3D | null = null
@@ -121,7 +185,8 @@ export class StaticDragonRenderer {
   private modelNeckDrop = 1
   private aspect = 1
   private hasNativeJaw = false
-  private hasNativeEyes = false
+  private hasNativeBlink = false
+  private hasNativeGaze = false
 
   constructor(width: number, height: number) {
     this.canvas = document.createElement('canvas')
@@ -152,8 +217,100 @@ export class StaticDragonRenderer {
       }),
     )
     this.privacyMesh.name = 'WhiteDragon_PrivateHeadOccluder'
-    this.privacyMesh.position.z = -1.5
+    this.privacyMesh.position.z = -1.48
     this.privacyMesh.frustumCulled = false
+
+    this.auraGlow = new Mesh(
+      new CircleGeometry(1.34, 96),
+      new MeshBasicMaterial({
+        color: AURA_CYAN,
+        transparent: true,
+        opacity: 0.085,
+        blending: AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        side: DoubleSide,
+      }),
+    )
+    this.auraGlow.position.z = -1.8
+
+    this.auraInnerRing = new Mesh(
+      new RingGeometry(0.82, 0.842, 96),
+      new MeshBasicMaterial({
+        color: AURA_ICE,
+        transparent: true,
+        opacity: 0.34,
+        blending: AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        side: DoubleSide,
+      }),
+    )
+    this.auraInnerRing.position.z = -1.7
+
+    this.auraMiddleRing = new Mesh(
+      new RingGeometry(1.01, 1.023, 112),
+      new MeshBasicMaterial({
+        color: AURA_CYAN,
+        transparent: true,
+        opacity: 0.3,
+        blending: AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        side: DoubleSide,
+      }),
+    )
+    this.auraMiddleRing.position.z = -1.72
+
+    this.auraOuterRing = new Mesh(
+      new RingGeometry(1.19, 1.205, 128),
+      new MeshBasicMaterial({
+        color: AURA_GOLD,
+        transparent: true,
+        opacity: 0.24,
+        blending: AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        side: DoubleSide,
+      }),
+    )
+    this.auraOuterRing.position.z = -1.74
+
+    for (let index = 0; index < 12; index += 1) {
+      const angle = index / 12 * Math.PI * 2
+      const sigil = new Mesh(this.auraSigilGeometry, this.auraSigilMaterial)
+      sigil.position.set(Math.cos(angle) * 1.1, Math.sin(angle) * 1.18, -1.69)
+      sigil.rotation.z = angle
+      sigil.frustumCulled = false
+      this.auraSigilRing.add(sigil)
+    }
+
+    this.auraParticles = new Points(
+      createAuraParticles(),
+      new PointsMaterial({
+        color: AURA_ICE,
+        size: 3.1,
+        sizeAttenuation: false,
+        transparent: true,
+        opacity: 0.52,
+        blending: AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    )
+
+    this.auraGroup.add(this.auraGlow)
+    this.auraGroup.add(this.auraInnerRing)
+    this.auraGroup.add(this.auraMiddleRing)
+    this.auraGroup.add(this.auraOuterRing)
+    this.auraGroup.add(this.auraSigilRing)
+    this.auraGroup.add(this.auraParticles)
+    this.privacyGroup.add(this.auraGroup)
     this.privacyGroup.add(this.privacyMesh)
 
     this.scene.add(this.privacyGroup)
@@ -182,8 +339,8 @@ export class StaticDragonRenderer {
   }
 
   get facialRigMode(): 'native' | 'native-partial' | 'static-model' {
-    if (this.hasNativeJaw && this.hasNativeEyes) return 'native'
-    if (this.hasNativeJaw || this.hasNativeEyes) return 'native-partial'
+    if (this.hasNativeJaw && this.hasNativeBlink) return 'native'
+    if (this.hasNativeJaw || this.hasNativeBlink || this.hasNativeGaze) return 'native-partial'
     return 'static-model'
   }
 
@@ -208,14 +365,11 @@ export class StaticDragonRenderer {
 
       this.collectMorphBindings(gltf.scene)
       this.hasNativeJaw = this.hasMorph('jawOpen')
-      this.hasNativeEyes = this.hasMorph('blinkLeft')
-        && this.hasMorph('blinkRight')
-        && (
-          this.hasMorph('eyeLookInLeft')
-          || this.hasMorph('eyeLookOutLeft')
-          || this.hasMorph('eyeLookInRight')
-          || this.hasMorph('eyeLookOutRight')
-        )
+      this.hasNativeBlink = this.hasMorph('blinkLeft') && this.hasMorph('blinkRight')
+      this.hasNativeGaze = this.hasMorph('eyeLookInLeft')
+        || this.hasMorph('eyeLookOutLeft')
+        || this.hasMorph('eyeLookInRight')
+        || this.hasMorph('eyeLookOutRight')
 
       gltf.scene.traverse((object) => {
         if (object instanceof Mesh) object.frustumCulled = false
@@ -313,12 +467,13 @@ export class StaticDragonRenderer {
       0,
     )
     this.privacyGroup.scale.set(
-      baseFaceWidthWorld * depthScale * 0.84,
-      baseFaceHeightWorld * depthScale * 0.58,
+      baseFaceWidthWorld * depthScale * 0.9,
+      baseFaceHeightWorld * depthScale * 0.63,
       1,
     )
     this.privacyGroup.rotation.set(0, 0, -pose.roll)
     this.privacyGroup.visible = true
+    this.updateAura(performance.now(), pose)
 
     this.renderer.render(this.scene, this.camera)
     return true
@@ -328,8 +483,37 @@ export class StaticDragonRenderer {
     this.disposeModel()
     this.privacyMesh.geometry.dispose()
     this.disposeMaterial(this.privacyMesh.material as Material)
+    this.auraGlow.geometry.dispose()
+    this.disposeMaterial(this.auraGlow.material as Material)
+    this.auraInnerRing.geometry.dispose()
+    this.disposeMaterial(this.auraInnerRing.material as Material)
+    this.auraMiddleRing.geometry.dispose()
+    this.disposeMaterial(this.auraMiddleRing.material as Material)
+    this.auraOuterRing.geometry.dispose()
+    this.disposeMaterial(this.auraOuterRing.material as Material)
+    this.auraSigilGeometry.dispose()
+    this.auraSigilMaterial.dispose()
+    this.auraParticles.geometry.dispose()
+    this.disposeMaterial(this.auraParticles.material as Material)
     this.renderer.dispose()
     this.renderer.forceContextLoss()
+  }
+
+  private updateAura(timeMs: number, expression: DragonExpressionState): void {
+    const time = timeMs * 0.001
+    const pulse = 1.08 + Math.sin(time * 1.12) * 0.035
+    const speechEnergy = expression.jawOpen * 0.035
+
+    this.auraGroup.scale.setScalar(pulse + speechEnergy)
+    this.auraInnerRing.rotation.z = time * 0.13
+    this.auraMiddleRing.rotation.z = -time * 0.075
+    this.auraOuterRing.rotation.z = time * 0.042
+    this.auraSigilRing.rotation.z = -time * 0.034
+    this.auraParticles.rotation.z = time * 0.052
+    this.auraParticles.position.y = Math.sin(time * 0.85) * 0.018
+
+    const glowMaterial = this.auraGlow.material as MeshBasicMaterial
+    glowMaterial.opacity = 0.075 + (Math.sin(time * 1.12) + 1) * 0.014 + speechEnergy
   }
 
   private collectMorphBindings(root: Object3D): void {
@@ -389,7 +573,10 @@ export class StaticDragonRenderer {
 
   private setMorph(binding: MorphBinding, semantic: MorphSemantic, value: number): void {
     const index = binding.indices[semantic]
-    if (index !== undefined) binding.influences[index] = clamp(value, 0, 1)
+    if (index === undefined) return
+
+    const response = MORPH_RESPONSE[semantic] ?? { gain: 1, max: 1 }
+    binding.influences[index] = clamp(value * response.gain, 0, response.max)
   }
 
   private renderPrivacyCurtain(): boolean {
@@ -412,7 +599,8 @@ export class StaticDragonRenderer {
     this.modelRoot = null
     this.morphBindings.length = 0
     this.hasNativeJaw = false
-    this.hasNativeEyes = false
+    this.hasNativeBlink = false
+    this.hasNativeGaze = false
   }
 
   private disposeMaterial(material: Material): void {
