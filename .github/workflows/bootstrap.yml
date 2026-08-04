@@ -1,0 +1,33 @@
+name: Bootstrap FaceCam source
+
+on:
+  push:
+    branches:
+      - agent/initial-facecam-mvp
+    paths:
+      - '.bootstrap/**'
+      - '.github/workflows/bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Expand project source
+        run: |
+          cat .bootstrap/chunk-* | base64 --decode > /tmp/facecam.tar.gz
+          tar -xzf /tmp/facecam.tar.gz -C .
+          rm -rf .bootstrap
+          rm -f .github/workflows/bootstrap.yml
+      - name: Commit project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Build initial FaceCam MVP"
+          git push
