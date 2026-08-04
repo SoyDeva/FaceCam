@@ -6,13 +6,39 @@ import { LocalRecorder } from '../recording/localRecorder'
 import { formatDuration } from '../shared/format'
 import { FaceTracker } from '../tracking/faceTracker'
 import type { UserSettings } from '../auth/types'
-import { describeMediaError, listCameras, openCamera, stopStream, type CameraDevice } from './devices'
+import {
+  describeMediaError,
+  listCameras,
+  openCamera,
+  stopStream,
+  type CameraDevice,
+} from './devices'
 
 interface CameraStudioProps {
   userId: string
 }
 
 type StudioStatus = 'idle' | 'requesting' | 'ready' | 'recording' | 'finalizing' | 'error'
+
+interface OutputSize {
+  width: number
+  height: number
+}
+
+function fitCameraOutput(videoWidth: number, videoHeight: number): OutputSize {
+  const sourceWidth = Math.max(1, videoWidth)
+  const sourceHeight = Math.max(1, videoHeight)
+  const isPortrait = sourceHeight > sourceWidth
+  const maxWidth = isPortrait ? runtimeConfig.outputHeight : runtimeConfig.outputWidth
+  const maxHeight = isPortrait ? runtimeConfig.outputWidth : runtimeConfig.outputHeight
+  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight)
+  const toEven = (value: number) => Math.max(2, Math.round(value / 2) * 2)
+
+  return {
+    width: toEven(sourceWidth * scale),
+    height: toEven(sourceHeight * scale),
+  }
+}
 
 export function CameraStudio({ userId }: CameraStudioProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -37,6 +63,10 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   const [message, setMessage] = useState('Activa la cámara para comenzar.')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [faceVisible, setFaceVisible] = useState(false)
+  const [outputSize, setOutputSize] = useState<OutputSize>({
+    width: runtimeConfig.outputWidth,
+    height: runtimeConfig.outputHeight,
+  })
 
   const saveSettings = useCallback(async (patch: Partial<UserSettings>) => {
     const { error } = await supabase
@@ -69,6 +99,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     const canvas = canvasRef.current
     const stream = streamRef.current
     if (!video || !canvas || !stream) return
+
     const context = canvas.getContext('2d', { alpha: false })
     if (!context) return
 
@@ -105,6 +136,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       neckEnabledRef.current,
     )
     context.restore()
+
     if (detected !== faceVisibleRef.current) {
       faceVisibleRef.current = detected
       setFaceVisible(detected)
@@ -116,6 +148,9 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   const activateCamera = useCallback(async (deviceId?: string) => {
     setStatus('requesting')
     setMessage('Solicitando permiso para usar la cámara…')
+
+    const currentVideo = videoRef.current
+    if (currentVideo) currentVideo.onresize = null
     stopStream(streamRef.current)
     streamRef.current = null
 
@@ -125,10 +160,24 @@ export function CameraStudio({ userId }: CameraStudioProps) {
 
       const video = videoRef.current
       if (!video) throw new Error('No se pudo preparar la vista previa.')
+
       video.muted = true
       video.playsInline = true
       video.srcObject = stream
       await video.play()
+
+      const syncOutputSize = () => {
+        if (!video.videoWidth || !video.videoHeight) return
+        const nextSize = fitCameraOutput(video.videoWidth, video.videoHeight)
+        setOutputSize((currentSize) =>
+          currentSize.width === nextSize.width && currentSize.height === nextSize.height
+            ? currentSize
+            : nextSize,
+        )
+      }
+
+      syncOutputSize()
+      video.onresize = syncOutputSize
 
       try {
         const availableCameras = await listCameras()
@@ -144,8 +193,8 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       const hasAudio = stream.getAudioTracks().length > 0
       setMessage(
         hasAudio
-          ? 'Cámara y micrófono activos. Preparando seguimiento facial…'
-          : 'Cámara activa. El micrófono no fue autorizado; el video se grabará sin audio.',
+          ? 'Cámara completa y micrófono activos. Preparando seguimiento facial…'
+          : 'Cámara completa activa. El micrófono no fue autorizado; el video se grabará sin audio.',
       )
 
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
@@ -155,8 +204,8 @@ export function CameraStudio({ userId }: CameraStudioProps) {
         .then(() => {
           setMessage(
             hasAudio
-              ? 'Procesamiento local activo. La máscara actual es un prototipo técnico.'
-              : 'Cámara y máscara activas. El video se grabará sin audio.',
+              ? 'Procesamiento local activo. La cámara conserva su proporción original.'
+              : 'Cámara y máscara activas sin deformación. El video se grabará sin audio.',
           )
         })
         .catch((trackingError) => {
@@ -174,6 +223,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   useEffect(() => {
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+      if (videoRef.current) videoRef.current.onresize = null
       stopStream(streamRef.current)
       trackerRef.current.close()
     }
@@ -193,8 +243,10 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     const canvas = canvasRef.current
     const sourceStream = streamRef.current
     if (!canvas || !sourceStream) return
+
     const canvasStream = canvas.captureStream(30)
     sourceStream.getAudioTracks().forEach((track) => canvasStream.addTrack(track))
+
     try {
       await recorderRef.current.start(canvasStream)
       recordingStartedAtRef.current = Date.now()
@@ -209,8 +261,10 @@ export function CameraStudio({ userId }: CameraStudioProps) {
 
   async function stopRecording() {
     if (status !== 'recording') return
+
     setStatus('finalizing')
     setMessage('Preparando el archivo local…')
+
     try {
       const file = await recorderRef.current.stop()
       const url = URL.createObjectURL(file)
@@ -254,13 +308,16 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       </header>
 
       <section className="stage-card">
-        <div className="stage">
+        <div
+          className="stage"
+          style={{ aspectRatio: `${outputSize.width} / ${outputSize.height}` }}
+        >
           <video aria-hidden="true" muted playsInline ref={videoRef} />
           <canvas
             aria-label="Vista previa de cámara con máscara"
-            height={runtimeConfig.outputHeight}
+            height={outputSize.height}
             ref={canvasRef}
-            width={runtimeConfig.outputWidth}
+            width={outputSize.width}
           />
           <div className="stage-overlay">
             <span className={`status-dot ${faceVisible ? 'online' : ''}`} />
@@ -318,7 +375,12 @@ export function CameraStudio({ userId }: CameraStudioProps) {
 
           <div className="action-row">
             {!cameraActive && (
-              <button className="primary-button" disabled={status === 'requesting'} onClick={() => void activateCamera()} type="button">
+              <button
+                className="primary-button"
+                disabled={status === 'requesting'}
+                onClick={() => void activateCamera()}
+                type="button"
+              >
                 {status === 'requesting' ? 'Activando…' : 'Activar cámara'}
               </button>
             )}
