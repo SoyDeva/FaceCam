@@ -25,20 +25,26 @@ const LANDMARK = {
   chin: 152,
   mouthLeft: 61,
   mouthRight: 291,
-  upperLip: 13,
-  lowerLip: 14,
+  upperLipInner: 13,
+  lowerLipInner: 14,
+  upperLipOuter: 0,
+  lowerLipOuter: 17,
   leftEyeOuter: 33,
   leftEyeInner: 133,
   leftEyeUpperA: 159,
   leftEyeLowerA: 145,
   leftEyeUpperB: 160,
   leftEyeLowerB: 144,
+  leftEyeUpperC: 158,
+  leftEyeLowerC: 153,
   rightEyeInner: 362,
   rightEyeOuter: 263,
   rightEyeUpperA: 386,
   rightEyeLowerA: 374,
   rightEyeUpperB: 385,
   rightEyeLowerB: 380,
+  rightEyeUpperC: 387,
+  rightEyeLowerC: 373,
 } as const
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -67,51 +73,100 @@ function score(scores: Map<string, number>, name: string): number {
   return clamp(scores.get(name) ?? 0)
 }
 
+/**
+ * Compresses the low end of a MediaPipe score so normal speech and short
+ * blinks use more of the morph target's available range. The exponential
+ * response preserves a stable neutral zone while reaching full expression
+ * without requiring exaggerated human movement.
+ */
+function compressedResponse(value: number, deadZone: number, strength: number): number {
+  const active = Math.max(0, value - deadZone)
+  return clamp(1 - Math.exp(-active * strength))
+}
+
 function mouthLandmarkSignal(result: FaceLandmarkerResult | null): number {
   const landmarks = result?.faceLandmarks[0]
   if (!landmarks) return 0
 
-  const upper = landmarks[LANDMARK.upperLip]
-  const lower = landmarks[LANDMARK.lowerLip]
+  const upperInner = landmarks[LANDMARK.upperLipInner]
+  const lowerInner = landmarks[LANDMARK.lowerLipInner]
+  const upperOuter = landmarks[LANDMARK.upperLipOuter]
+  const lowerOuter = landmarks[LANDMARK.lowerLipOuter]
   const forehead = landmarks[LANDMARK.forehead]
   const chin = landmarks[LANDMARK.chin]
   const mouthLeft = landmarks[LANDMARK.mouthLeft]
   const mouthRight = landmarks[LANDMARK.mouthRight]
-  if (!upper || !lower || !forehead || !chin || !mouthLeft || !mouthRight) return 0
+  if (
+    !upperInner
+    || !lowerInner
+    || !upperOuter
+    || !lowerOuter
+    || !forehead
+    || !chin
+    || !mouthLeft
+    || !mouthRight
+  ) return 0
 
   const faceHeight = distance2d(forehead, chin)
   const mouthWidth = distance2d(mouthLeft, mouthRight)
   if (faceHeight < 0.08 || mouthWidth < 0.025) return 0
 
-  const gap = distance2d(upper, lower)
+  const innerGap = distance2d(upperInner, lowerInner)
+  const outerGap = distance2d(upperOuter, lowerOuter)
+  const gap = Math.max(innerGap, outerGap * 0.72)
   const heightRatio = gap / faceHeight
   const widthRatio = gap / mouthWidth
-  const heightSignal = smoothstep(0.0045, 0.105, heightRatio)
-  const widthSignal = smoothstep(0.012, 0.42, widthRatio)
-  return clamp(heightSignal * 0.72 + widthSignal * 0.28)
+
+  // Normal conversational articulation often occupies only the first third of
+  // the landmark range. These curves deliberately expose that useful range.
+  const heightSignal = smoothstep(0.0018, 0.061, heightRatio)
+  const widthSignal = smoothstep(0.006, 0.235, widthRatio)
+  const combined = clamp(heightSignal * 0.76 + widthSignal * 0.24)
+  return Math.pow(combined, 0.72)
 }
 
 function eyeLandmarkBlink(
   result: FaceLandmarkerResult | null,
-  indices: readonly [number, number, number, number, number, number],
+  indices: readonly [number, number, number, number, number, number, number, number],
 ): number {
   const landmarks = result?.faceLandmarks[0]
   if (!landmarks) return 0
 
-  const [outerIndex, innerIndex, upperAIndex, lowerAIndex, upperBIndex, lowerBIndex] = indices
+  const [
+    outerIndex,
+    innerIndex,
+    upperAIndex,
+    lowerAIndex,
+    upperBIndex,
+    lowerBIndex,
+    upperCIndex,
+    lowerCIndex,
+  ] = indices
   const outer = landmarks[outerIndex]
   const inner = landmarks[innerIndex]
   const upperA = landmarks[upperAIndex]
   const lowerA = landmarks[lowerAIndex]
   const upperB = landmarks[upperBIndex]
   const lowerB = landmarks[lowerBIndex]
-  if (!outer || !inner || !upperA || !lowerA || !upperB || !lowerB) return 0
+  const upperC = landmarks[upperCIndex]
+  const lowerC = landmarks[lowerCIndex]
+  if (!outer || !inner || !upperA || !lowerA || !upperB || !lowerB || !upperC || !lowerC) {
+    return 0
+  }
 
   const width = distance2d(outer, inner)
   if (width < 0.012) return 0
 
-  const opening = (distance2d(upperA, lowerA) + distance2d(upperB, lowerB)) / (2 * width)
-  return 1 - smoothstep(0.055, 0.235, opening)
+  const opening = (
+    distance2d(upperA, lowerA)
+    + distance2d(upperB, lowerB)
+    + distance2d(upperC, lowerC)
+  ) / (3 * width)
+
+  // Squaring suppresses tiny camera jitter while still producing a decisive
+  // closure as soon as the eyelids approach each other.
+  const closure = 1 - smoothstep(0.072, 0.185, opening)
+  return clamp(Math.pow(closure, 1.28))
 }
 
 export function estimateDragonExpression(
@@ -128,12 +183,15 @@ export function estimateDragonExpression(
   const lookDown = (score(scores, 'eyeLookDownLeft') + score(scores, 'eyeLookDownRight')) / 2
   const lookUp = (score(scores, 'eyeLookUpLeft') + score(scores, 'eyeLookUpRight')) / 2
 
-  const jawBlendshape = smoothstep(0.012, 0.5, score(scores, 'jawOpen'))
+  const jawBlendshape = compressedResponse(score(scores, 'jawOpen'), 0.003, 7.4)
   const mouthGeometry = mouthLandmarkSignal(result)
   const lipArticulation = Math.max(
     score(scores, 'mouthFunnel'),
     score(scores, 'mouthPucker'),
-  ) * 0.34
+  ) * 0.22
+  const mouthClose = score(scores, 'mouthClose')
+  const jawSignal = Math.max(jawBlendshape, mouthGeometry, lipArticulation)
+  const closeSuppression = jawSignal < 0.2 ? mouthClose * 0.2 : 0
 
   const leftBlinkGeometry = eyeLandmarkBlink(result, [
     LANDMARK.leftEyeOuter,
@@ -142,6 +200,8 @@ export function estimateDragonExpression(
     LANDMARK.leftEyeLowerA,
     LANDMARK.leftEyeUpperB,
     LANDMARK.leftEyeLowerB,
+    LANDMARK.leftEyeUpperC,
+    LANDMARK.leftEyeLowerC,
   ])
   const rightBlinkGeometry = eyeLandmarkBlink(result, [
     LANDMARK.rightEyeOuter,
@@ -150,15 +210,17 @@ export function estimateDragonExpression(
     LANDMARK.rightEyeLowerA,
     LANDMARK.rightEyeUpperB,
     LANDMARK.rightEyeLowerB,
+    LANDMARK.rightEyeUpperC,
+    LANDMARK.rightEyeLowerC,
   ])
 
-  const leftBlinkBlendshape = smoothstep(0.1, 0.58, score(scores, 'eyeBlinkLeft'))
-  const rightBlinkBlendshape = smoothstep(0.1, 0.58, score(scores, 'eyeBlinkRight'))
+  const leftBlinkBlendshape = compressedResponse(score(scores, 'eyeBlinkLeft'), 0.008, 7.2)
+  const rightBlinkBlendshape = compressedResponse(score(scores, 'eyeBlinkRight'), 0.008, 7.2)
 
   return {
-    jawOpen: clamp(Math.max(jawBlendshape, mouthGeometry, lipArticulation)),
-    blinkLeft: clamp(Math.max(leftBlinkBlendshape, leftBlinkGeometry * 0.98)),
-    blinkRight: clamp(Math.max(rightBlinkBlendshape, rightBlinkGeometry * 0.98)),
+    jawOpen: clamp((jawSignal - closeSuppression) * 1.08),
+    blinkLeft: clamp(Math.max(leftBlinkBlendshape, leftBlinkGeometry)),
+    blinkRight: clamp(Math.max(rightBlinkBlendshape, rightBlinkGeometry)),
     gazeX: clamp(
       ((lookOutLeft - lookInLeft) + (lookInRight - lookOutRight)) / 2,
       -1,
@@ -188,16 +250,16 @@ export function smoothDragonExpression(
   alpha = 0.38,
 ): DragonExpressionState {
   const amount = clamp(alpha)
-  const jawTarget = next.jawOpen < 0.018 ? 0 : next.jawOpen
+  const jawTarget = next.jawOpen < 0.022 ? 0 : next.jawOpen
   const jawAlpha = jawTarget > previous.jawOpen
-    ? Math.max(amount, 0.72)
-    : Math.max(amount, 0.5)
+    ? Math.max(amount, 0.86)
+    : Math.max(amount, 0.68)
   const leftBlinkAlpha = next.blinkLeft > previous.blinkLeft
-    ? Math.max(amount, 0.88)
-    : Math.max(amount, 0.68)
+    ? Math.max(amount, 0.96)
+    : Math.max(amount, 0.82)
   const rightBlinkAlpha = next.blinkRight > previous.blinkRight
-    ? Math.max(amount, 0.88)
-    : Math.max(amount, 0.68)
+    ? Math.max(amount, 0.96)
+    : Math.max(amount, 0.82)
 
   return {
     jawOpen: lerp(previous.jawOpen, jawTarget, jawAlpha),
