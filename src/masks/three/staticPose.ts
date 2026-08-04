@@ -20,6 +20,18 @@ const LANDMARK = {
   noseTip: 1,
 } as const
 
+function invisiblePose(): StaticDragonPoseEstimate {
+  return {
+    visible: false,
+    centerX: 0.5,
+    centerY: 0.5,
+    faceWidth: 0,
+    roll: 0,
+    yaw: 0,
+    pitch: 0,
+  }
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -35,17 +47,7 @@ export function estimateStaticDragonPose(
   result: FaceLandmarkerResult | null,
 ): StaticDragonPoseEstimate {
   const landmarks = result?.faceLandmarks[0]
-  if (!landmarks || landmarks.length <= LANDMARK.rightTemple) {
-    return {
-      visible: false,
-      centerX: 0.5,
-      centerY: 0.5,
-      faceWidth: 0,
-      roll: 0,
-      yaw: 0,
-      pitch: 0,
-    }
-  }
+  if (!landmarks) return invisiblePose()
 
   const forehead = landmarks[LANDMARK.forehead]
   const chin = landmarks[LANDMARK.chin]
@@ -55,19 +57,13 @@ export function estimateStaticDragonPose(
   const rightEye = landmarks[LANDMARK.rightEyeOuter]
   const nose = landmarks[LANDMARK.noseTip]
 
+  if (!forehead || !chin || !leftTemple || !rightTemple || !leftEye || !rightEye || !nose) {
+    return invisiblePose()
+  }
+
   const faceWidth = distance2d(leftTemple, rightTemple)
   const faceHeight = Math.max(0.001, distance2d(forehead, chin))
-  if (!Number.isFinite(faceWidth) || faceWidth < 0.025) {
-    return {
-      visible: false,
-      centerX: 0.5,
-      centerY: 0.5,
-      faceWidth: 0,
-      roll: 0,
-      yaw: 0,
-      pitch: 0,
-    }
-  }
+  if (!Number.isFinite(faceWidth) || faceWidth < 0.025) return invisiblePose()
 
   const eyeMidX = (leftEye.x + rightEye.x) / 2
   const headCenterY = forehead.y + faceHeight * 0.53
@@ -75,7 +71,7 @@ export function estimateStaticDragonPose(
 
   // MediaPipe z is relative to the head scale. Temple depth difference is a
   // stable, expression-independent approximation for horizontal rotation.
-  const yaw = clamp(((leftTemple.z ?? 0) - (rightTemple.z ?? 0)) / faceWidth * 1.35, -0.95, 0.95)
+  const yaw = clamp((leftTemple.z - rightTemple.z) / faceWidth * 1.35, -0.95, 0.95)
 
   // Nose position inside the forehead/chin span provides a conservative pitch
   // estimate. Keeping the gain low avoids jaw expressions driving the head.
