@@ -43,7 +43,7 @@ export const DEFAULT_STATIC_DRAGON_CALIBRATION: StaticDragonCalibration = {
 }
 
 const MODEL_EYE_LINE_RATIO = 0.55
-const PRIVACY_COLOR = 0xb9c2c5
+const PRIVACY_COLOR = 0xdce4e6
 const PRIVACY_CURTAIN_COLOR = 0x101820
 
 function clamp(value: number, min: number, max: number): number {
