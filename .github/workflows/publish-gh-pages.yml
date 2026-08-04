@@ -1,0 +1,55 @@
+name: Publish GitHub Pages branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'tsconfig*.json'
+      - '.github/workflows/publish-gh-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-gh-pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Publish dist to gh-pages
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages:gh-pages
+          rm -rf /tmp/facecam-gh-pages
+          git worktree add /tmp/facecam-gh-pages gh-pages
+          find /tmp/facecam-gh-pages -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R dist/. /tmp/facecam-gh-pages/
+          touch /tmp/facecam-gh-pages/.nojekyll
+          cd /tmp/facecam-gh-pages
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No deployment changes."
+          else
+            git commit -m "Deploy FaceCam from ${GITHUB_SHA}"
+            git push origin gh-pages
+          fi
