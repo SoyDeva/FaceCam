@@ -1,0 +1,136 @@
+name: Apply camera aspect ratio hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/camera-aspect-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve the camera aspect ratio
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/camera/CameraStudio.tsx')
+          text = path.read_text()
+
+          marker = "type StudioStatus = 'idle' | 'requesting' | 'ready' | 'recording' | 'finalizing' | 'error'\n"
+          helper = """type StudioStatus = 'idle' | 'requesting' | 'ready' | 'recording' | 'finalizing' | 'error'
+
+interface OutputSize {
+  width: number
+  height: number
+}
+
+function fitCameraOutput(videoWidth: number, videoHeight: number): OutputSize {
+  const sourceWidth = Math.max(1, videoWidth)
+  const sourceHeight = Math.max(1, videoHeight)
+  const isPortrait = sourceHeight > sourceWidth
+  const maxWidth = isPortrait ? runtimeConfig.outputHeight : runtimeConfig.outputWidth
+  const maxHeight = isPortrait ? runtimeConfig.outputWidth : runtimeConfig.outputHeight
+  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight)
+  const toEven = (value: number) => Math.max(2, Math.round(value / 2) * 2)
+
+  return {
+    width: toEven(sourceWidth * scale),
+    height: toEven(sourceHeight * scale),
+  }
+}
+"""
+          if marker not in text:
+              raise SystemExit('StudioStatus marker not found.')
+          text = text.replace(marker, helper, 1)
+
+          state_marker = "  const [faceVisible, setFaceVisible] = useState(false)\n"
+          state_replacement = """  const [faceVisible, setFaceVisible] = useState(false)
+  const [outputSize, setOutputSize] = useState<OutputSize>({
+    width: runtimeConfig.outputWidth,
+    height: runtimeConfig.outputHeight,
+  })
+"""
+          if state_marker not in text:
+              raise SystemExit('State marker not found.')
+          text = text.replace(state_marker, state_replacement, 1)
+
+          play_marker = """      video.srcObject = stream
+      await video.play()
+
+      try {
+"""
+          play_replacement = """      video.srcObject = stream
+      await video.play()
+
+      const syncOutputSize = () => {
+        if (!video.videoWidth || !video.videoHeight) return
+        const nextSize = fitCameraOutput(video.videoWidth, video.videoHeight)
+        setOutputSize((currentSize) =>
+          currentSize.width === nextSize.width && currentSize.height === nextSize.height
+            ? currentSize
+            : nextSize,
+        )
+      }
+      syncOutputSize()
+      video.onresize = syncOutputSize
+
+      try {
+"""
+          if play_marker not in text:
+              raise SystemExit('Video play marker not found.')
+          text = text.replace(play_marker, play_replacement, 1)
+
+          cleanup_marker = """    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+      stopStream(streamRef.current)
+      trackerRef.current.close()
+    }
+"""
+          cleanup_replacement = """    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+      if (videoRef.current) videoRef.current.onresize = null
+      stopStream(streamRef.current)
+      trackerRef.current.close()
+    }
+"""
+          if cleanup_marker not in text:
+              raise SystemExit('Cleanup marker not found.')
+          text = text.replace(cleanup_marker, cleanup_replacement, 1)
+
+          stage_marker = '        <div className="stage">\n'
+          stage_replacement = """        <div
+          className="stage"
+          style={{ aspectRatio: `${outputSize.width} / ${outputSize.height}` }}
+        >
+"""
+          if stage_marker not in text:
+              raise SystemExit('Stage marker not found.')
+          text = text.replace(stage_marker, stage_replacement, 1)
+
+          canvas_marker = """            height={runtimeConfig.outputHeight}
+            ref={canvasRef}
+            width={runtimeConfig.outputWidth}
+"""
+          canvas_replacement = """            height={outputSize.height}
+            ref={canvasRef}
+            width={outputSize.width}
+"""
+          if canvas_marker not in text:
+              raise SystemExit('Canvas size marker not found.')
+          text = text.replace(canvas_marker, canvas_replacement, 1)
+
+          path.write_text(text)
+          PY
+      - name: Commit camera layout fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/camera/CameraStudio.tsx
+          git commit -m "Preserve camera aspect ratio on mobile"
+          git push
