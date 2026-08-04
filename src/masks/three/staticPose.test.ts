@@ -1,30 +1,37 @@
-import type { FaceLandmarkerResult } from '@mediapipe/tasks-vision'
+import type { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision'
 import { describe, expect, it } from 'vitest'
 import { estimateStaticDragonPose } from './staticPose'
 
+function landmark(x: number, y: number, z = 0): NormalizedLandmark {
+  return { x, y, z, visibility: 1 }
+}
+
 function resultWithLandmarks(
-  patch: Partial<Record<number, { x: number; y: number; z: number }>> = {},
+  patch: Partial<Record<number, NormalizedLandmark>> = {},
 ): FaceLandmarkerResult {
-  const landmarks = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }))
-  const defaults: Record<number, { x: number; y: number; z: number }> = {
-    10: { x: 0.5, y: 0.2, z: 0 },
-    152: { x: 0.5, y: 0.8, z: 0 },
-    234: { x: 0.3, y: 0.5, z: 0 },
-    454: { x: 0.7, y: 0.5, z: 0 },
-    33: { x: 0.4, y: 0.42, z: 0 },
-    263: { x: 0.6, y: 0.42, z: 0 },
-    1: { x: 0.5, y: 0.5, z: -0.05 },
+  const landmarks: NormalizedLandmark[] = Array.from(
+    { length: 478 },
+    () => landmark(0.5, 0.5),
+  )
+  const defaults: Record<number, NormalizedLandmark> = {
+    10: landmark(0.5, 0.2),
+    152: landmark(0.5, 0.8),
+    234: landmark(0.3, 0.5),
+    454: landmark(0.7, 0.5),
+    33: landmark(0.4, 0.42),
+    263: landmark(0.6, 0.42),
+    1: landmark(0.5, 0.5, -0.05),
   }
 
   for (const [index, value] of Object.entries({ ...defaults, ...patch })) {
-    landmarks[Number(index)] = value
+    if (value) landmarks[Number(index)] = value
   }
 
   return {
     faceLandmarks: [landmarks],
     faceBlendshapes: [],
     facialTransformationMatrixes: [],
-  } as FaceLandmarkerResult
+  } as unknown as FaceLandmarkerResult
 }
 
 describe('estimateStaticDragonPose', () => {
@@ -41,10 +48,10 @@ describe('estimateStaticDragonPose', () => {
 
   it('detects roll and horizontal depth rotation', () => {
     const pose = estimateStaticDragonPose(resultWithLandmarks({
-      33: { x: 0.4, y: 0.38, z: 0 },
-      263: { x: 0.6, y: 0.46, z: 0 },
-      234: { x: 0.3, y: 0.5, z: 0.08 },
-      454: { x: 0.7, y: 0.5, z: -0.08 },
+      33: landmark(0.4, 0.38),
+      263: landmark(0.6, 0.46),
+      234: landmark(0.3, 0.5, 0.08),
+      454: landmark(0.7, 0.5, -0.08),
     }))
 
     expect(pose.roll).toBeGreaterThan(0)
