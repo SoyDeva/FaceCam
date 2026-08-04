@@ -2,12 +2,14 @@ import {
   DEFAULT_STATIC_DRAGON_CALIBRATION,
   type StaticDragonCalibration,
 } from './StaticDragonRenderer'
+import type { StaticDragonHeadCalibration } from './headCalibration'
 
 const DATABASE_NAME = 'facecam-local-assets'
 const DATABASE_VERSION = 1
 const MODEL_STORE = 'models'
 const WHITE_DRAGON_KEY = 'white-dragon-medium'
-const CALIBRATION_KEY = 'facecam:white-dragon-calibration:v1'
+const CALIBRATION_KEY = 'facecam:white-dragon-calibration:v2'
+const HEAD_CALIBRATION_KEY = 'facecam:white-dragon-head-calibration:v1'
 
 interface StoredDragonModel {
   id: typeof WHITE_DRAGON_KEY
@@ -151,7 +153,6 @@ export function loadLocalDragonCalibration(): StaticDragonCalibration {
       facingReversed: typeof value.facingReversed === 'boolean'
         ? value.facingReversed
         : DEFAULT_STATIC_DRAGON_CALIBRATION.facingReversed,
-      coverageShield: false,
     }
   } catch {
     return { ...DEFAULT_STATIC_DRAGON_CALIBRATION }
@@ -160,11 +161,57 @@ export function loadLocalDragonCalibration(): StaticDragonCalibration {
 
 export function saveLocalDragonCalibration(calibration: StaticDragonCalibration): void {
   try {
-    window.localStorage.setItem(
-      CALIBRATION_KEY,
-      JSON.stringify({ ...calibration, coverageShield: false }),
-    )
+    window.localStorage.setItem(CALIBRATION_KEY, JSON.stringify(calibration))
   } catch (error) {
     console.warn('No fue posible guardar la calibración local del dragón.', error)
+  }
+}
+
+export function loadLocalDragonHeadCalibration(): StaticDragonHeadCalibration | null {
+  try {
+    const raw = window.localStorage.getItem(HEAD_CALIBRATION_KEY)
+    if (!raw) return null
+    const value = JSON.parse(raw) as Partial<StaticDragonHeadCalibration>
+    const baseFaceWidth = finiteNumber(value.baseFaceWidth, 0)
+    const baseEyeDistance = finiteNumber(value.baseEyeDistance, 0)
+    const baseFaceHeight = finiteNumber(value.baseFaceHeight, 0)
+    const capturedAt = finiteNumber(value.capturedAt, 0)
+
+    if (
+      value.version !== 1
+      || baseFaceWidth < 0.08
+      || baseEyeDistance < 0.025
+      || baseFaceHeight < 0.1
+    ) {
+      return null
+    }
+
+    return {
+      version: 1,
+      baseFaceWidth,
+      baseEyeDistance,
+      baseFaceHeight,
+      capturedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function saveLocalDragonHeadCalibration(
+  calibration: StaticDragonHeadCalibration,
+): void {
+  try {
+    window.localStorage.setItem(HEAD_CALIBRATION_KEY, JSON.stringify(calibration))
+  } catch (error) {
+    console.warn('No fue posible guardar la forma calibrada de la cabeza.', error)
+  }
+}
+
+export function removeLocalDragonHeadCalibration(): void {
+  try {
+    window.localStorage.removeItem(HEAD_CALIBRATION_KEY)
+  } catch (error) {
+    console.warn('No fue posible borrar la calibración de la cabeza.', error)
   }
 }
