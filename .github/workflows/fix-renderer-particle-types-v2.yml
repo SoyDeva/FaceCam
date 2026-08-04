@@ -3,6 +3,7 @@ name: Fix renderer particle typing v2
 on:
   push:
     branches:
+      - main
       - agent/facial-response-celestial-aura-v2
 
 permissions:
