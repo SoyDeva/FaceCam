@@ -19,7 +19,6 @@ permissions:
 
 jobs:
   bootstrap:
-    if: ${{ hashFiles('.bootstrap/chunk-00') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +27,7 @@ jobs:
           fetch-depth: 0
       - name: Expand project source
         run: |
+          test -f .bootstrap/chunk-00
           cat .bootstrap/chunk-* | base64 --decode > /tmp/facecam.tar.gz
           tar -xzf /tmp/facecam.tar.gz -C .
           rm -f .github/workflows/ci.yml .github/workflows/deploy-pages.yml
