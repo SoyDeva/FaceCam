@@ -1,23 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { runtimeConfig } from '../config/runtime'
 import {
   describeMediaError,
   openCamera,
   stopStream,
 } from '../camera/devices'
-import { FaceTracker } from '../tracking/faceTracker'
+import { runtimeConfig } from '../config/runtime'
 import {
   DEFAULT_STATIC_DRAGON_CALIBRATION,
   StaticDragonRenderer,
   type StaticDragonCalibration,
 } from '../masks/three/StaticDragonRenderer'
-import { estimateStaticDragonPose } from '../masks/three/staticPose'
+import {
+  StaticDragonHeadCalibrator,
+  type StaticDragonHeadCalibration,
+} from '../masks/three/headCalibration'
 import {
   loadLocalDragonCalibration,
+  loadLocalDragonHeadCalibration,
   loadLocalDragonModel,
   saveLocalDragonCalibration,
+  saveLocalDragonHeadCalibration,
   saveLocalDragonModel,
 } from '../masks/three/localAssetStore'
+import {
+  estimateStaticDragonPose,
+  smoothStaticDragonPose,
+  type StaticDragonPoseEstimate,
+} from '../masks/three/staticPose'
+import { FaceTracker } from '../tracking/faceTracker'
 
 interface OutputSize {
   width: number
@@ -43,15 +53,21 @@ function fitCameraOutput(videoWidth: number, videoHeight: number): OutputSize {
 
 export function StaticDragonCameraLab() {
   const initialCalibration = loadLocalDragonCalibration()
+  const initialHeadCalibration = loadLocalDragonHeadCalibration()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const trackerRef = useRef(new FaceTracker())
+  const trackerReadyRef = useRef(false)
   const dragonRendererRef = useRef<StaticDragonRenderer | null>(null)
+  const modelReadyRef = useRef(false)
   const animationFrameRef = useRef<number | null>(null)
   const lastTrackingAtRef = useRef(0)
   const lastResultRef = useRef<ReturnType<FaceTracker['detect']>>(null)
   const calibrationRef = useRef<StaticDragonCalibration>(initialCalibration)
+  const headCalibrationRef = useRef<StaticDragonHeadCalibration | null>(initialHeadCalibration)
+  const headCalibratorRef = useRef(new StaticDragonHeadCalibrator())
+  const smoothedPoseRef = useRef<StaticDragonPoseEstimate | null>(null)
   const mirrorRef = useRef(true)
   const faceVisibleRef = useRef(false)
   const mountedRef = useRef(true)
@@ -63,6 +79,9 @@ export function StaticDragonCameraLab() {
   const [modelInstalled, setModelInstalled] = useState(false)
   const [faceVisible, setFaceVisible] = useState(false)
   const [mirror, setMirror] = useState(true)
+  const [calibratingHead, setCalibratingHead] = useState(false)
+  const [headCalibrationProgress, setHeadCalibrationProgress] = useState(0)
+  const [headCalibrated, setHeadCalibrated] = useState(Boolean(initialHeadCalibration))
   const [calibration, setCalibration] = useState<StaticDragonCalibration>(initialCalibration)
   const [outputSize, setOutputSize] = useState<OutputSize>({
     width: runtimeConfig.outputWidth,
@@ -77,6 +96,21 @@ export function StaticDragonCameraLab() {
       return next
     })
   }
+
+  const startHeadCalibration = useCallback(() => {
+    if (!modelReadyRef.current || !trackerReadyRef.current || !streamRef.current) {
+      setMessage('Carga el GLB, activa la cámara y espera a que el seguimiento esté listo.')
+      return
+    }
+
+    headCalibratorRef.current.start()
+    headCalibrationRef.current = null
+    smoothedPoseRef.current = null
+    setCalibratingHead(true)
+    setHeadCalibrated(false)
+    setHeadCalibrationProgress(0)
+    setMessage('Mira al frente y mantén la cabeza quieta. Se están midiendo ojos, ancho y altura facial.')
+  }, [])
 
   async function prepareModel(blob: Blob, name: string, persist: boolean) {
     setMessage(persist ? 'Validando e instalando el GLB local…' : 'Cargando el Dragón Blanco instalado…')
@@ -99,21 +133,25 @@ export function StaticDragonCameraLab() {
           installed = true
         } catch (storageError) {
           console.warn('El GLB funciona, pero no pudo instalarse de forma persistente.', storageError)
-          storageWarning = ' El modelo funciona ahora, pero el navegador no permitió conservarlo para la cámara principal.'
+          storageWarning = ' El navegador no permitió conservarlo para la cámara principal.'
         }
       }
 
       if (!mountedRef.current) return
+      modelReadyRef.current = true
       setModelName(name)
       setModelReady(true)
       setModelInstalled(installed)
       setMessage(
         status === 'ready'
-          ? `Dragón 3D ${installed ? 'instalado y ' : ''}activo. Ajusta la calibración y vuelve a FaceCam.${storageWarning}`
-          : `Modelo ${installed ? 'instalado' : 'validado'}. Activa la cámara para comprobarlo.${storageWarning}`,
+          ? `Dragón 3D ${installed ? 'instalado y ' : ''}activo. Inicia la calibración frontal.${storageWarning}`
+          : `Modelo ${installed ? 'instalado' : 'validado'}. Activa la cámara para calibrar la cabeza.${storageWarning}`,
       )
+
+      if (trackerReadyRef.current && streamRef.current) startHeadCalibration()
     } catch (caught) {
       if (!mountedRef.current) return
+      modelReadyRef.current = false
       setModelReady(false)
       setMessage(caught instanceof Error ? caught.message : 'No fue posible cargar el GLB.')
     }
@@ -139,21 +177,39 @@ export function StaticDragonCameraLab() {
     context.restore()
 
     const now = performance.now()
+    let freshTrackingFrame = false
     if (now - lastTrackingAtRef.current >= 40) {
       lastTrackingAtRef.current = now
       try {
         lastResultRef.current = trackerRef.current.detect(video, now)
+        freshTrackingFrame = true
       } catch (error) {
         console.warn('Fotograma de seguimiento omitido en el laboratorio 3D.', error)
       }
     }
 
-    const pose = estimateStaticDragonPose(lastResultRef.current)
+    const rawPose = estimateStaticDragonPose(lastResultRef.current)
+    if (freshTrackingFrame && headCalibratorRef.current.active) {
+      const capture = headCalibratorRef.current.capture(rawPose)
+      if (capture.accepted) setHeadCalibrationProgress(capture.progress)
+      if (capture.calibration) {
+        headCalibrationRef.current = capture.calibration
+        saveLocalDragonHeadCalibration(capture.calibration)
+        setCalibratingHead(false)
+        setHeadCalibrated(true)
+        setMessage('Calibración terminada: ojos alineados y escala fija durante los giros.')
+      }
+    }
+
+    const pose = smoothStaticDragonPose(smoothedPoseRef.current, rawPose)
+    smoothedPoseRef.current = pose.visible ? pose : null
+
     const renderer = dragonRendererRef.current
     const rendered = renderer?.render(
       pose,
       calibrationRef.current,
       mirrorRef.current,
+      headCalibrationRef.current,
     ) ?? false
 
     if (rendered && renderer) {
@@ -177,6 +233,9 @@ export function StaticDragonCameraLab() {
   const activateCamera = useCallback(async () => {
     setStatus('requesting')
     setMessage('Solicitando la cámara para la prueba 3D…')
+    trackerReadyRef.current = false
+    headCalibratorRef.current.cancel()
+    setCalibratingHead(false)
 
     const existingVideo = videoRef.current
     if (existingVideo) existingVideo.onresize = null
@@ -206,8 +265,8 @@ export function StaticDragonCameraLab() {
 
       setStatus('ready')
       setMessage(
-        modelReady
-          ? 'Cámara activa. Preparando seguimiento rígido del Dragón Blanco…'
+        modelReadyRef.current
+          ? 'Cámara activa. Preparando el análisis frontal de la cabeza…'
           : 'Cámara activa. Instala el GLB para verlo y usarlo en FaceCam.',
       )
 
@@ -215,18 +274,19 @@ export function StaticDragonCameraLab() {
       animationFrameRef.current = requestAnimationFrame(renderLoop)
 
       await trackerRef.current.initialize()
-      setMessage(
-        modelReady
-          ? 'Seguimiento rígido activo. La calibración se guarda automáticamente para FaceCam.'
-          : 'Seguimiento activo. Elige el GLB para instalarlo en este navegador.',
-      )
+      trackerReadyRef.current = true
+      if (modelReadyRef.current) {
+        startHeadCalibration()
+      } else {
+        setMessage('Seguimiento activo. Elige el GLB para instalarlo en este navegador.')
+      }
     } catch (caught) {
       stopStream(streamRef.current)
       streamRef.current = null
       setStatus('error')
       setMessage(describeMediaError(caught))
     }
-  }, [modelReady, renderLoop])
+  }, [renderLoop, startHeadCalibration])
 
   useEffect(() => {
     void loadLocalDragonModel()
@@ -258,9 +318,12 @@ export function StaticDragonCameraLab() {
       if (videoRef.current) videoRef.current.onresize = null
       stopStream(streamRef.current)
       trackerRef.current.close()
+      trackerReadyRef.current = false
       dragonRendererRef.current?.dispose()
     }
   }, [])
+
+  const calibrationPercent = Math.round(headCalibrationProgress * 100)
 
   return (
     <main className="studio-shell">
@@ -289,7 +352,11 @@ export function StaticDragonCameraLab() {
           />
           <div className="stage-overlay">
             <span className={`status-dot ${faceVisible ? 'online' : ''}`} />
-            {faceVisible ? 'Modelo siguiendo la cabeza' : 'Esperando modelo y rostro'}
+            {calibratingHead
+              ? `Analizando cabeza · ${calibrationPercent}%`
+              : faceVisible
+                ? 'Ojos anclados y escala fija'
+                : 'Esperando modelo, calibración y rostro'}
           </div>
         </div>
 
@@ -327,22 +394,13 @@ export function StaticDragonCameraLab() {
                 type="checkbox"
               />
             </label>
-
-            <label className="toggle-row">
-              <span>Cobertura posterior</span>
-              <input
-                checked={calibration.coverageShield}
-                onChange={(event) => updateCalibration({ coverageShield: event.target.checked })}
-                type="checkbox"
-              />
-            </label>
           </div>
 
           <details open>
-            <summary>Calibración de cobertura</summary>
+            <summary>Ajuste visual después de calibrar la cabeza</summary>
             <div className="control-grid">
               <label>
-                Escala · {calibration.scaleMultiplier.toFixed(2)}
+                Escala base · {calibration.scaleMultiplier.toFixed(2)}
                 <input
                   max="2.4"
                   min="1"
@@ -353,7 +411,7 @@ export function StaticDragonCameraLab() {
                 />
               </label>
               <label>
-                Horizontal · {calibration.offsetX.toFixed(2)}
+                Ojos horizontal · {calibration.offsetX.toFixed(2)}
                 <input
                   max="0.5"
                   min="-0.5"
@@ -364,7 +422,7 @@ export function StaticDragonCameraLab() {
                 />
               </label>
               <label>
-                Vertical · {calibration.offsetY.toFixed(2)}
+                Ojos vertical · {calibration.offsetY.toFixed(2)}
                 <input
                   max="0.5"
                   min="-0.5"
@@ -407,7 +465,7 @@ export function StaticDragonCameraLab() {
               }}
               type="button"
             >
-              Restablecer calibración
+              Restablecer ajuste visual
             </button>
           </details>
 
@@ -415,11 +473,12 @@ export function StaticDragonCameraLab() {
           {modelName && (
             <p className="privacy-note">
               <strong>{modelInstalled ? 'Instalado para FaceCam' : 'Activo en esta pestaña'}:</strong> {modelName}
+              {' · '}{headCalibrated ? 'Cabeza calibrada' : 'Falta calibrar cabeza'}
             </p>
           )}
 
-          {status !== 'ready' && (
-            <div className="action-row">
+          <div className="action-row">
+            {status !== 'ready' && (
               <button
                 className="primary-button"
                 disabled={status === 'requesting'}
@@ -428,13 +487,23 @@ export function StaticDragonCameraLab() {
               >
                 {status === 'requesting' ? 'Activando…' : 'Activar cámara de prueba'}
               </button>
-            </div>
-          )}
+            )}
+            {status === 'ready' && modelReady && (
+              <button
+                className="primary-button"
+                disabled={calibratingHead}
+                onClick={startHeadCalibration}
+                type="button"
+              >
+                {calibratingHead ? `Calibrando ${calibrationPercent}%` : 'Calibrar cabeza'}
+              </button>
+            )}
+          </div>
         </div>
       </section>
 
       <aside className="privacy-note">
-        <strong>Instalación local:</strong> el GLB se conserva en IndexedDB dentro de este navegador. No se envía a Supabase ni a otro servidor. La cámara principal lo cargará automáticamente y usará la máscara procedural como respaldo.
+        <strong>Calibración local:</strong> al inicio se promedian varios fotogramas frontales. Después la escala se bloquea y solo se actualizan la posición y la rotación. El GLB y las mediciones permanecen en este navegador.
       </aside>
     </main>
   )
