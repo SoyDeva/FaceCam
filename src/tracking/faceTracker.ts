@@ -14,20 +14,36 @@ export class FaceTracker {
 
   async initialize(): Promise<void> {
     if (this.landmarker) return
+
     const vision = await FilesetResolver.forVisionTasks(WASM_ROOT)
-    this.landmarker = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: MODEL_URL,
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
+    const commonOptions = {
+      runningMode: 'VIDEO' as const,
       numFaces: 1,
       outputFaceBlendshapes: true,
       outputFacialTransformationMatrixes: true,
       minFaceDetectionConfidence: 0.55,
       minFacePresenceConfidence: 0.55,
       minTrackingConfidence: 0.55,
-    })
+    }
+
+    try {
+      this.landmarker = await FaceLandmarker.createFromOptions(vision, {
+        ...commonOptions,
+        baseOptions: {
+          modelAssetPath: MODEL_URL,
+          delegate: 'GPU',
+        },
+      })
+    } catch (gpuError) {
+      console.warn('MediaPipe GPU no está disponible; usando CPU.', gpuError)
+      this.landmarker = await FaceLandmarker.createFromOptions(vision, {
+        ...commonOptions,
+        baseOptions: {
+          modelAssetPath: MODEL_URL,
+          delegate: 'CPU',
+        },
+      })
+    }
   }
 
   detect(video: HTMLVideoElement, timestampMs: number): FaceLandmarkerResult | null {
