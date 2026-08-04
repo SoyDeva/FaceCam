@@ -1,6 +1,6 @@
 import type { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision'
 import { describe, expect, it } from 'vitest'
-import { estimateStaticDragonPose } from './staticPose'
+import { estimateStaticDragonPose, resolveStaticDragonYaw } from './staticPose'
 
 function landmark(x: number, y: number, z = 0): NormalizedLandmark {
   return { x, y, z, visibility: 1 }
@@ -60,5 +60,17 @@ describe('estimateStaticDragonPose', () => {
 
   it('returns invisible without landmarks', () => {
     expect(estimateStaticDragonPose(null).visible).toBe(false)
+  })
+})
+
+describe('resolveStaticDragonYaw', () => {
+  it('reverses visual yaw when the preview is mirrored', () => {
+    expect(resolveStaticDragonYaw(0.5, 1, false, false)).toBeCloseTo(0.5)
+    expect(resolveStaticDragonYaw(0.5, 1, false, true)).toBeCloseTo(-0.5)
+  })
+
+  it('preserves the reversed-model base orientation', () => {
+    expect(resolveStaticDragonYaw(0, 1, true, false)).toBeCloseTo(Math.PI)
+    expect(resolveStaticDragonYaw(0.25, 1, true, true)).toBeCloseTo(Math.PI + 0.25)
   })
 })

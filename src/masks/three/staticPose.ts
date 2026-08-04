@@ -88,3 +88,15 @@ export function estimateStaticDragonPose(
     pitch,
   }
 }
+
+export function resolveStaticDragonYaw(
+  poseYaw: number,
+  multiplier: number,
+  facingReversed: boolean,
+  mirrored: boolean,
+): number {
+  const baseYaw = facingReversed ? Math.PI : 0
+  const modelDirection = facingReversed ? -1 : 1
+  const displayDirection = mirrored ? -1 : 1
+  return baseYaw + poseYaw * multiplier * modelDirection * displayDirection
+}
