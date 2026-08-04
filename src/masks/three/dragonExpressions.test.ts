@@ -6,8 +6,12 @@ import {
   smoothDragonExpression,
 } from './dragonExpressions'
 
+function landmark(x: number, y: number, z = 0): NormalizedLandmark {
+  return { x, y, z, visibility: 1 }
+}
+
 function baseLandmarks(): NormalizedLandmark[] {
-  return Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }))
+  return Array.from({ length: 478 }, () => landmark(0.5, 0.5))
 }
 
 function resultWithScores(
@@ -63,12 +67,12 @@ describe('estimateDragonExpression', () => {
 
   it('uses lip geometry when the blendshape is weak', () => {
     const landmarks = baseLandmarks()
-    landmarks[10] = { x: 0.5, y: 0.25, z: 0 }
-    landmarks[152] = { x: 0.5, y: 0.76, z: 0 }
-    landmarks[61] = { x: 0.42, y: 0.56, z: 0 }
-    landmarks[291] = { x: 0.58, y: 0.56, z: 0 }
-    landmarks[13] = { x: 0.5, y: 0.535, z: 0 }
-    landmarks[14] = { x: 0.5, y: 0.595, z: 0 }
+    landmarks[10] = landmark(0.5, 0.25)
+    landmarks[152] = landmark(0.5, 0.76)
+    landmarks[61] = landmark(0.42, 0.56)
+    landmarks[291] = landmark(0.58, 0.56)
+    landmarks[13] = landmark(0.5, 0.535)
+    landmarks[14] = landmark(0.5, 0.595)
 
     const expression = estimateDragonExpression(resultWithScores({ jawOpen: 0.02 }, landmarks))
     expect(expression.jawOpen).toBeGreaterThan(0.45)
@@ -76,12 +80,12 @@ describe('estimateDragonExpression', () => {
 
   it('detects a closed left eyelid from landmarks', () => {
     const landmarks = baseLandmarks()
-    landmarks[33] = { x: 0.35, y: 0.43, z: 0 }
-    landmarks[133] = { x: 0.45, y: 0.43, z: 0 }
-    landmarks[159] = { x: 0.4, y: 0.429, z: 0 }
-    landmarks[145] = { x: 0.4, y: 0.433, z: 0 }
-    landmarks[160] = { x: 0.39, y: 0.429, z: 0 }
-    landmarks[144] = { x: 0.39, y: 0.433, z: 0 }
+    landmarks[33] = landmark(0.35, 0.43)
+    landmarks[133] = landmark(0.45, 0.43)
+    landmarks[159] = landmark(0.4, 0.429)
+    landmarks[145] = landmark(0.4, 0.433)
+    landmarks[160] = landmark(0.39, 0.429)
+    landmarks[144] = landmark(0.39, 0.433)
 
     const expression = estimateDragonExpression(resultWithScores({}, landmarks))
     expect(expression.blinkLeft).toBeGreaterThan(0.85)
