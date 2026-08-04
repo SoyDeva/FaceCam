@@ -2,6 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { runtimeConfig } from '../config/runtime'
 import { supabase } from '../config/supabase'
 import { drawWhiteDragon } from '../masks/dragonPlaceholder'
+import {
+  StaticDragonRenderer,
+  type StaticDragonCalibration,
+} from '../masks/three/StaticDragonRenderer'
+import { estimateStaticDragonPose } from '../masks/three/staticPose'
+import {
+  loadLocalDragonCalibration,
+  loadLocalDragonModel,
+} from '../masks/three/localAssetStore'
 import { LocalRecorder } from '../recording/localRecorder'
 import { formatDuration } from '../shared/format'
 import { FaceTracker } from '../tracking/faceTracker'
@@ -47,6 +56,10 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   const animationFrameRef = useRef<number | null>(null)
   const trackerRef = useRef(new FaceTracker())
   const recorderRef = useRef(new LocalRecorder())
+  const dragonRendererRef = useRef<StaticDragonRenderer | null>(null)
+  const dragonReadyRef = useRef(false)
+  const dragonCalibrationRef = useRef<StaticDragonCalibration>(loadLocalDragonCalibration())
+  const useThreeDragonRef = useRef(true)
   const recordingStartedAtRef = useRef(0)
   const stopRecordingRef = useRef<() => Promise<void>>(async () => undefined)
   const lastTrackingAtRef = useRef(0)
@@ -59,6 +72,8 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   const [selectedCamera, setSelectedCamera] = useState('')
   const [mirror, setMirror] = useState(false)
   const [neckEnabled, setNeckEnabled] = useState(false)
+  const [dragonInstalled, setDragonInstalled] = useState(false)
+  const [useThreeDragon, setUseThreeDragon] = useState(true)
   const [status, setStatus] = useState<StudioStatus>('idle')
   const [message, setMessage] = useState('Activa la cámara para comenzar.')
   const [elapsedMs, setElapsedMs] = useState(0)
@@ -94,6 +109,46 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     void loadSettings()
   }, [userId])
 
+  useEffect(() => {
+    let cancelled = false
+
+    void loadLocalDragonModel()
+      .then(async (stored) => {
+        if (!stored || cancelled) return
+
+        const renderer = new StaticDragonRenderer(
+          runtimeConfig.outputWidth,
+          runtimeConfig.outputHeight,
+        )
+        try {
+          await renderer.load(stored.blob)
+          if (cancelled) {
+            renderer.dispose()
+            return
+          }
+          dragonRendererRef.current?.dispose()
+          dragonRendererRef.current = renderer
+          dragonReadyRef.current = true
+          dragonCalibrationRef.current = loadLocalDragonCalibration()
+          setDragonInstalled(true)
+        } catch (error) {
+          renderer.dispose()
+          console.warn('El modelo 3D local no pudo cargarse; se usará la máscara de respaldo.', error)
+        }
+      })
+      .catch((error) => {
+        console.warn('No fue posible consultar el modelo 3D local.', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    dragonRendererRef.current?.setSize(outputSize.width, outputSize.height)
+  }, [outputSize])
+
   const renderLoop = useCallback(() => {
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -123,19 +178,43 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       }
     }
 
-    context.save()
-    if (mirrorRef.current) {
-      context.translate(canvas.width, 0)
-      context.scale(-1, 1)
+    let detected = false
+    const dragonRenderer = dragonRendererRef.current
+    if (useThreeDragonRef.current && dragonReadyRef.current && dragonRenderer) {
+      const pose = estimateStaticDragonPose(lastResultRef.current)
+      const rendered = dragonRenderer.render(
+        pose,
+        dragonCalibrationRef.current,
+        mirrorRef.current,
+      )
+
+      if (rendered) {
+        context.save()
+        if (mirrorRef.current) {
+          context.translate(canvas.width, 0)
+          context.scale(-1, 1)
+        }
+        context.drawImage(dragonRenderer.canvas, 0, 0, canvas.width, canvas.height)
+        context.restore()
+        detected = true
+      }
     }
-    const detected = drawWhiteDragon(
-      context,
-      lastResultRef.current,
-      canvas.width,
-      canvas.height,
-      neckEnabledRef.current,
-    )
-    context.restore()
+
+    if (!detected) {
+      context.save()
+      if (mirrorRef.current) {
+        context.translate(canvas.width, 0)
+        context.scale(-1, 1)
+      }
+      detected = drawWhiteDragon(
+        context,
+        lastResultRef.current,
+        canvas.width,
+        canvas.height,
+        neckEnabledRef.current,
+      )
+      context.restore()
+    }
 
     if (detected !== faceVisibleRef.current) {
       faceVisibleRef.current = detected
@@ -226,6 +305,9 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       if (videoRef.current) videoRef.current.onresize = null
       stopStream(streamRef.current)
       trackerRef.current.close()
+      dragonRendererRef.current?.dispose()
+      dragonRendererRef.current = null
+      dragonReadyRef.current = false
     }
   }, [])
 
@@ -294,12 +376,13 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   }
 
   const cameraActive = ['ready', 'recording', 'finalizing'].includes(status)
+  const threeDragonActive = dragonInstalled && useThreeDragon
 
   return (
     <main className="studio-shell">
       <header className="studio-header">
         <div>
-          <p className="eyebrow">FACE CAM · PROTOTIPO 0.1</p>
+          <p className="eyebrow">FACE CAM · PROTOTIPO 0.2</p>
           <h1>Dragón Blanco</h1>
         </div>
         <button className="ghost-button" onClick={() => void supabase.auth.signOut()} type="button">
@@ -358,9 +441,23 @@ export function CameraStudio({ userId }: CameraStudioProps) {
             </label>
 
             <label className="toggle-row">
-              <span>Cuello del dragón</span>
+              <span>Usar dragón 3D local</span>
               <input
-                checked={neckEnabled}
+                checked={threeDragonActive}
+                disabled={!dragonInstalled}
+                onChange={(event) => {
+                  setUseThreeDragon(event.target.checked)
+                  useThreeDragonRef.current = event.target.checked
+                }}
+                type="checkbox"
+              />
+            </label>
+
+            <label className="toggle-row">
+              <span>{threeDragonActive ? 'Cuello incluido en el GLB' : 'Cuello del dragón'}</span>
+              <input
+                checked={threeDragonActive ? true : neckEnabled}
+                disabled={threeDragonActive}
                 onChange={(event) => {
                   setNeckEnabled(event.target.checked)
                   neckEnabledRef.current = event.target.checked
@@ -372,8 +469,25 @@ export function CameraStudio({ userId }: CameraStudioProps) {
           </div>
 
           <p className={`studio-message ${status === 'error' ? 'error-message' : ''}`}>{message}</p>
+          <p className="privacy-note">
+            <strong>Máscara activa:</strong>{' '}
+            {threeDragonActive
+              ? 'Dragón 3D instalado localmente; se incluirá en la grabación.'
+              : dragonInstalled
+                ? 'Máscara procedural de respaldo. Puedes volver a activar el modelo 3D.'
+                : 'Máscara procedural de respaldo. Instala el GLB desde el laboratorio 3D.'}
+          </p>
 
           <div className="action-row">
+            <button
+              className="ghost-button"
+              disabled={status === 'recording' || status === 'finalizing'}
+              onClick={() => window.location.assign(`${import.meta.env.BASE_URL}?dragonLab=1`)}
+              type="button"
+            >
+              {dragonInstalled ? 'Calibrar dragón 3D' : 'Instalar dragón 3D'}
+            </button>
+
             {!cameraActive && (
               <button
                 className="primary-button"
@@ -399,7 +513,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       </section>
 
       <aside className="privacy-note">
-        <strong>Privacidad local:</strong> los fotogramas, el audio y los datos faciales permanecen en este dispositivo. Supabase solo conserva tu cuenta y preferencias.
+        <strong>Privacidad local:</strong> los fotogramas, el audio, los datos faciales y el GLB instalado permanecen en este dispositivo. Supabase solo conserva tu cuenta y preferencias.
       </aside>
     </main>
   )

@@ -12,6 +12,12 @@ import {
   type StaticDragonCalibration,
 } from '../masks/three/StaticDragonRenderer'
 import { estimateStaticDragonPose } from '../masks/three/staticPose'
+import {
+  loadLocalDragonCalibration,
+  loadLocalDragonModel,
+  saveLocalDragonCalibration,
+  saveLocalDragonModel,
+} from '../masks/three/localAssetStore'
 
 interface OutputSize {
   width: number
@@ -36,6 +42,7 @@ function fitCameraOutput(videoWidth: number, videoHeight: number): OutputSize {
 }
 
 export function StaticDragonCameraLab() {
+  const initialCalibration = loadLocalDragonCalibration()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -44,19 +51,19 @@ export function StaticDragonCameraLab() {
   const animationFrameRef = useRef<number | null>(null)
   const lastTrackingAtRef = useRef(0)
   const lastResultRef = useRef<ReturnType<FaceTracker['detect']>>(null)
-  const calibrationRef = useRef<StaticDragonCalibration>({ ...DEFAULT_STATIC_DRAGON_CALIBRATION })
+  const calibrationRef = useRef<StaticDragonCalibration>(initialCalibration)
   const mirrorRef = useRef(true)
   const faceVisibleRef = useRef(false)
+  const mountedRef = useRef(true)
 
   const [status, setStatus] = useState<LabStatus>('idle')
-  const [message, setMessage] = useState('Carga el GLB y activa la cámara para comenzar la calibración.')
+  const [message, setMessage] = useState('Buscando un Dragón Blanco instalado en este navegador…')
   const [modelName, setModelName] = useState('')
   const [modelReady, setModelReady] = useState(false)
+  const [modelInstalled, setModelInstalled] = useState(false)
   const [faceVisible, setFaceVisible] = useState(false)
   const [mirror, setMirror] = useState(true)
-  const [calibration, setCalibration] = useState<StaticDragonCalibration>({
-    ...DEFAULT_STATIC_DRAGON_CALIBRATION,
-  })
+  const [calibration, setCalibration] = useState<StaticDragonCalibration>(initialCalibration)
   const [outputSize, setOutputSize] = useState<OutputSize>({
     width: runtimeConfig.outputWidth,
     height: runtimeConfig.outputHeight,
@@ -66,8 +73,50 @@ export function StaticDragonCameraLab() {
     setCalibration((current) => {
       const next = { ...current, ...patch }
       calibrationRef.current = next
+      saveLocalDragonCalibration(next)
       return next
     })
+  }
+
+  async function prepareModel(blob: Blob, name: string, persist: boolean) {
+    setMessage(persist ? 'Validando e instalando el GLB local…' : 'Cargando el Dragón Blanco instalado…')
+
+    try {
+      const canvas = canvasRef.current
+      const renderer = dragonRendererRef.current ?? new StaticDragonRenderer(
+        canvas?.width ?? outputSize.width,
+        canvas?.height ?? outputSize.height,
+      )
+      dragonRendererRef.current = renderer
+      renderer.setSize(outputSize.width, outputSize.height)
+      await renderer.load(blob)
+
+      let installed = !persist
+      let storageWarning = ''
+      if (persist) {
+        try {
+          await saveLocalDragonModel(blob, name)
+          installed = true
+        } catch (storageError) {
+          console.warn('El GLB funciona, pero no pudo instalarse de forma persistente.', storageError)
+          storageWarning = ' El modelo funciona ahora, pero el navegador no permitió conservarlo para la cámara principal.'
+        }
+      }
+
+      if (!mountedRef.current) return
+      setModelName(name)
+      setModelReady(true)
+      setModelInstalled(installed)
+      setMessage(
+        status === 'ready'
+          ? `Dragón 3D ${installed ? 'instalado y ' : ''}activo. Ajusta la calibración y vuelve a FaceCam.${storageWarning}`
+          : `Modelo ${installed ? 'instalado' : 'validado'}. Activa la cámara para comprobarlo.${storageWarning}`,
+      )
+    } catch (caught) {
+      if (!mountedRef.current) return
+      setModelReady(false)
+      setMessage(caught instanceof Error ? caught.message : 'No fue posible cargar el GLB.')
+    }
   }
 
   const renderLoop = useCallback(() => {
@@ -159,7 +208,7 @@ export function StaticDragonCameraLab() {
       setMessage(
         modelReady
           ? 'Cámara activa. Preparando seguimiento rígido del Dragón Blanco…'
-          : 'Cámara activa. Carga el GLB local para verlo sobre el rostro.',
+          : 'Cámara activa. Instala el GLB para verlo y usarlo en FaceCam.',
       )
 
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
@@ -168,8 +217,8 @@ export function StaticDragonCameraLab() {
       await trackerRef.current.initialize()
       setMessage(
         modelReady
-          ? 'Seguimiento rígido activo. Ajusta escala, posición y orientación.'
-          : 'Seguimiento activo. Elige el GLB para comenzar la calibración.',
+          ? 'Seguimiento rígido activo. La calibración se guarda automáticamente para FaceCam.'
+          : 'Seguimiento activo. Elige el GLB para instalarlo en este navegador.',
       )
     } catch (caught) {
       stopStream(streamRef.current)
@@ -179,29 +228,24 @@ export function StaticDragonCameraLab() {
     }
   }, [modelReady, renderLoop])
 
-  async function loadModel(file: File) {
-    setMessage('Validando y preparando el GLB local…')
-    try {
-      const canvas = canvasRef.current
-      const renderer = dragonRendererRef.current ?? new StaticDragonRenderer(
-        canvas?.width ?? outputSize.width,
-        canvas?.height ?? outputSize.height,
-      )
-      dragonRendererRef.current = renderer
-      renderer.setSize(outputSize.width, outputSize.height)
-      await renderer.load(file)
-      setModelName(file.name)
-      setModelReady(true)
-      setMessage(
-        status === 'ready'
-          ? 'Modelo cargado localmente. Ajusta la calibración hasta cubrir por completo la cabeza.'
-          : 'Modelo validado. Activa la cámara para iniciar la prueba.',
-      )
-    } catch (caught) {
-      setModelReady(false)
-      setMessage(caught instanceof Error ? caught.message : 'No fue posible cargar el GLB.')
-    }
-  }
+  useEffect(() => {
+    void loadLocalDragonModel()
+      .then((stored) => {
+        if (!stored || !mountedRef.current) {
+          if (mountedRef.current) {
+            setMessage('No hay un modelo 3D instalado. Selecciona el GLB una vez para usarlo también en FaceCam.')
+          }
+          return
+        }
+        void prepareModel(stored.blob, stored.name, false)
+      })
+      .catch((error) => {
+        console.warn('No fue posible consultar el modelo 3D instalado.', error)
+        if (mountedRef.current) {
+          setMessage('Selecciona el GLB para instalarlo localmente en este navegador.')
+        }
+      })
+  }, [])
 
   useEffect(() => {
     dragonRendererRef.current?.setSize(outputSize.width, outputSize.height)
@@ -209,6 +253,7 @@ export function StaticDragonCameraLab() {
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
       if (videoRef.current) videoRef.current.onresize = null
       stopStream(streamRef.current)
@@ -251,12 +296,12 @@ export function StaticDragonCameraLab() {
         <div className="control-panel">
           <div className="control-grid">
             <label>
-              GLB local
+              Instalar o reemplazar GLB
               <input
                 accept=".glb,model/gltf-binary"
                 onChange={(event) => {
                   const file = event.target.files?.[0]
-                  if (file) void loadModel(file)
+                  if (file) void prepareModel(file, file.name, true)
                 }}
                 type="file"
               />
@@ -358,6 +403,7 @@ export function StaticDragonCameraLab() {
                 const defaults = { ...DEFAULT_STATIC_DRAGON_CALIBRATION }
                 setCalibration(defaults)
                 calibrationRef.current = defaults
+                saveLocalDragonCalibration(defaults)
               }}
               type="button"
             >
@@ -366,7 +412,11 @@ export function StaticDragonCameraLab() {
           </details>
 
           <p className={`studio-message ${status === 'error' ? 'error-message' : ''}`}>{message}</p>
-          {modelName && <p className="privacy-note"><strong>Activo local:</strong> {modelName}</p>}
+          {modelName && (
+            <p className="privacy-note">
+              <strong>{modelInstalled ? 'Instalado para FaceCam' : 'Activo en esta pestaña'}:</strong> {modelName}
+            </p>
+          )}
 
           {status !== 'ready' && (
             <div className="action-row">
@@ -384,7 +434,7 @@ export function StaticDragonCameraLab() {
       </section>
 
       <aside className="privacy-note">
-        <strong>Prueba local:</strong> el GLB, la cámara y los datos faciales permanecen en este dispositivo. Este activo todavía es rígido; no tiene parpadeo ni mandíbula articulada.
+        <strong>Instalación local:</strong> el GLB se conserva en IndexedDB dentro de este navegador. No se envía a Supabase ni a otro servidor. La cámara principal lo cargará automáticamente y usará la máscara procedural como respaldo.
       </aside>
     </main>
   )
