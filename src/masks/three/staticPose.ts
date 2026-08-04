@@ -1,6 +1,12 @@
 import type { FaceLandmarkerResult } from '@mediapipe/tasks-vision'
+import {
+  estimateDragonExpression,
+  NEUTRAL_DRAGON_EXPRESSION,
+  smoothDragonExpression,
+  type DragonExpressionState,
+} from './dragonExpressions'
 
-export interface StaticDragonPoseEstimate {
+export interface StaticDragonPoseEstimate extends DragonExpressionState {
   visible: boolean
   centerX: number
   centerY: number
@@ -51,6 +57,7 @@ function invisiblePose(): StaticDragonPoseEstimate {
     roll: 0,
     yaw: 0,
     pitch: 0,
+    ...NEUTRAL_DRAGON_EXPRESSION,
   }
 }
 
@@ -149,6 +156,7 @@ export function estimateStaticDragonPose(
     roll,
     yaw,
     pitch,
+    ...estimateDragonExpression(result),
   }
 }
 
@@ -159,6 +167,7 @@ export function smoothStaticDragonPose(
 ): StaticDragonPoseEstimate {
   if (!next.visible || !previous?.visible) return next
   const amount = clamp(alpha, 0, 1)
+  const expression = smoothDragonExpression(previous, next, 0.4)
 
   return {
     visible: true,
@@ -178,6 +187,7 @@ export function smoothStaticDragonPose(
     roll: lerp(previous.roll, next.roll, amount),
     yaw: lerp(previous.yaw, next.yaw, amount),
     pitch: lerp(previous.pitch, next.pitch, amount),
+    ...expression,
   }
 }
 

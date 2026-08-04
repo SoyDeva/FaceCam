@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { NEUTRAL_DRAGON_EXPRESSION } from './dragonExpressions'
 import type { StaticDragonHeadCalibration } from './headCalibration'
 import {
   MonocularHeadDistanceModel,
@@ -33,6 +34,7 @@ function pose(patch: Partial<StaticDragonPoseEstimate> = {}): StaticDragonPoseEs
     roll: 0,
     yaw: 0,
     pitch: 0,
+    ...NEUTRAL_DRAGON_EXPRESSION,
     ...patch,
   }
 }
