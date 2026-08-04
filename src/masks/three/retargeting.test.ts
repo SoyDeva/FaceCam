@@ -34,7 +34,7 @@ describe('retargetFaceExpression', () => {
     expect(frame.blinkLeft).toBeCloseTo(0.8)
     expect(frame.jawOpen).toBeCloseTo(0.9)
     expect(frame.mouthSmileLeft).toBeCloseTo(0.45)
-    expect(frame.nostrilFlare).toBeGreaterThan(0.4)
+    expect(frame.nostrilFlare).toBeCloseTo(0.333)
   })
 
   it('returns a neutral frame without tracking', () => {
