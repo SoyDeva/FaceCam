@@ -9,6 +9,12 @@ export interface StaticDragonPoseEstimate {
   eyeDistance: number
   faceWidth: number
   faceHeight: number
+  foreheadX: number
+  foreheadY: number
+  chinX: number
+  chinY: number
+  neckAnchorX: number
+  neckAnchorY: number
   roll: number
   yaw: number
   pitch: number
@@ -36,6 +42,12 @@ function invisiblePose(): StaticDragonPoseEstimate {
     eyeDistance: 0,
     faceWidth: 0,
     faceHeight: 0,
+    foreheadX: 0.5,
+    foreheadY: 0.3,
+    chinX: 0.5,
+    chinY: 0.7,
+    neckAnchorX: 0.5,
+    neckAnchorY: 0.82,
     roll: 0,
     yaw: 0,
     pitch: 0,
@@ -107,11 +119,17 @@ export function estimateStaticDragonPose(
   const roll = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x)
 
   // MediaPipe z is relative to head scale. Temple depth difference remains
-  // useful for rotation, but it is never used as a per-frame scale source.
+  // useful for rotation and is corrected before any distance inference.
   const yaw = clamp((leftTemple.z - rightTemple.z) / faceWidth * 1.35, -0.95, 0.95)
 
   const noseRatio = (nose.y - forehead.y) / faceHeight
   const pitch = clamp((noseRatio - 0.5) * 1.45, -0.55, 0.55)
+
+  // Face Landmarker does not include shoulders. The neck anchor is therefore
+  // inferred conservatively below the chin and shifted slightly with yaw so
+  // the GLB neck remains attached to the torso during head rotation.
+  const neckAnchorX = clamp(chin.x + yaw * faceWidth * 0.055, 0, 1)
+  const neckAnchorY = clamp(chin.y + faceHeight * 0.2, 0, 1)
 
   return {
     visible: true,
@@ -122,6 +140,12 @@ export function estimateStaticDragonPose(
     eyeDistance,
     faceWidth,
     faceHeight,
+    foreheadX: clamp(forehead.x, 0, 1),
+    foreheadY: clamp(forehead.y, 0, 1),
+    chinX: clamp(chin.x, 0, 1),
+    chinY: clamp(chin.y, 0, 1),
+    neckAnchorX,
+    neckAnchorY,
     roll,
     yaw,
     pitch,
@@ -145,6 +169,12 @@ export function smoothStaticDragonPose(
     eyeDistance: lerp(previous.eyeDistance, next.eyeDistance, amount),
     faceWidth: lerp(previous.faceWidth, next.faceWidth, amount),
     faceHeight: lerp(previous.faceHeight, next.faceHeight, amount),
+    foreheadX: lerp(previous.foreheadX, next.foreheadX, amount),
+    foreheadY: lerp(previous.foreheadY, next.foreheadY, amount),
+    chinX: lerp(previous.chinX, next.chinX, amount),
+    chinY: lerp(previous.chinY, next.chinY, amount),
+    neckAnchorX: lerp(previous.neckAnchorX, next.neckAnchorX, amount),
+    neckAnchorY: lerp(previous.neckAnchorY, next.neckAnchorY, amount),
     roll: lerp(previous.roll, next.roll, amount),
     yaw: lerp(previous.yaw, next.yaw, amount),
     pitch: lerp(previous.pitch, next.pitch, amount),
