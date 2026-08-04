@@ -6,65 +6,9 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair-renderer-v2:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/facial-response-celestial-aura-v2' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/facial-response-celestial-aura-v2
-          fetch-depth: 0
-      - name: Make typed-array access explicit
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('src/masks/three/StaticDragonRenderer.ts')
-          text = path.read_text()
-          old = """    for (let index = 0; index < count; index += 1) {
-      const phase = field.phases[index]
-      const angle = field.angles[index] + time * field.speeds[index]
-      const float = Math.sin(time * (0.7 + field.speeds[index] * 5) + phase)
-      const radial = field.radii[index] + float * drift + speechEnergy * 0.018
-      attribute.setXYZ(
-        index,
-        Math.cos(angle) * radial,
-        Math.sin(angle) * radial * field.verticalScales[index] + float * 0.045,
-        field.z,
-      )
-    }
-"""
-          new = """    for (let index = 0; index < count; index += 1) {
-      const phase = field.phases[index] ?? 0
-      const baseAngle = field.angles[index] ?? 0
-      const speed = field.speeds[index] ?? 0
-      const baseRadius = field.radii[index] ?? 0
-      const verticalScale = field.verticalScales[index] ?? 1
-      const angle = baseAngle + time * speed
-      const float = Math.sin(time * (0.7 + speed * 5) + phase)
-      const radial = baseRadius + float * drift + speechEnergy * 0.018
-      attribute.setXYZ(
-        index,
-        Math.cos(angle) * radial,
-        Math.sin(angle) * radial * verticalScale + float * 0.045,
-        field.z,
-      )
-    }
-"""
-          if old not in text:
-              raise SystemExit('Expected particle loop was not found')
-          path.write_text(text.replace(old, new))
-          PY
-      - name: Commit repair
-        run: |
-          git config user.name "FaceCam Automation"
-          git config user.email "actions@users.noreply.github.com"
-          git add src/masks/three/StaticDragonRenderer.ts
-          git commit -m "Guard aura particle buffers [particle-types-v2]"
-          git push origin HEAD:agent/facial-response-celestial-aura-v2
-
   validate:
     runs-on: ubuntu-latest
     steps:
