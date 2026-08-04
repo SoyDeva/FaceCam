@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "white-dragon",
+  "displayName": "Dragón Blanco",
+  "enabled": false,
+  "assetVersion": "0.0.0-placeholder",
+  "contract": "docs/white-dragon-3d-production-spec.md",
+  "basisTranscoderPath": "vendor/basis/",
+  "lods": {
+    "high": {
+      "url": "models/white-dragon/white-dragon-high.glb",
+      "maxTextureSize": 4096,
+      "targetTriangles": 90000
+    },
+    "medium": {
+      "url": "models/white-dragon/white-dragon-medium.glb",
+      "maxTextureSize": 2048,
+      "targetTriangles": 40000
+    },
+    "low": {
+      "url": "models/white-dragon/white-dragon-low.glb",
+      "maxTextureSize": 1024,
+      "targetTriangles": 18000
+    }
+  },
+  "nodes": {
+    "root": "WhiteDragon_Root",
+    "headRig": "Head_Rig",
+    "jaw": "Jaw",
+    "leftEye": "Eye_L",
+    "rightEye": "Eye_R",
+    "headMesh": "Dragon_Head_Mesh",
+    "eyesMesh": "Dragon_Eyes_Mesh",
+    "sigil": "Forehead_Sigil",
+    "neck": "Dragon_Neck"
+  }
+}
