@@ -47,3 +47,5 @@ jobs:
           git add src/camera/CameraStudio.tsx
           git commit -m "Keep download URL alive for large recordings"
           git push
+
+# Second push activates this registered workflow.
