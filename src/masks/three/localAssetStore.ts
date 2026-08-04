@@ -45,35 +45,48 @@ function openDatabase(): Promise<IDBDatabase> {
 
 function runTransaction<T>(
   mode: IDBTransactionMode,
-  operation: (store: IDBObjectStore, resolve: (value: T) => void, reject: (reason?: unknown) => void) => void,
+  operation: (
+    store: IDBObjectStore,
+    setResult: (value: T) => void,
+    reject: (reason?: unknown) => void,
+  ) => void,
 ): Promise<T> {
   return openDatabase().then((database) => new Promise<T>((resolve, reject) => {
     const transaction = database.transaction(MODEL_STORE, mode)
     const store = transaction.objectStore(MODEL_STORE)
+    let result: T | undefined
+    let hasResult = false
     let settled = false
 
-    const safeResolve = (value: T) => {
-      if (settled) return
-      settled = true
-      resolve(value)
+    const setResult = (value: T) => {
+      result = value
+      hasResult = true
     }
     const safeReject = (reason?: unknown) => {
       if (settled) return
       settled = true
+      database.close()
       reject(reason)
     }
 
-    transaction.oncomplete = () => database.close()
-    transaction.onerror = () => {
+    transaction.oncomplete = () => {
+      if (settled) return
+      settled = true
       database.close()
+      if (!hasResult) {
+        reject(new Error('La operación local terminó sin resultado.'))
+        return
+      }
+      resolve(result as T)
+    }
+    transaction.onerror = () => {
       safeReject(transaction.error ?? new Error('Falló la operación de almacenamiento local.'))
     }
     transaction.onabort = () => {
-      database.close()
       safeReject(transaction.error ?? new Error('La operación de almacenamiento local fue cancelada.'))
     }
 
-    operation(store, safeResolve, safeReject)
+    operation(store, setResult, safeReject)
   }))
 }
 
@@ -85,23 +98,23 @@ export async function saveLocalDragonModel(blob: Blob, name: string): Promise<vo
     installedAt: Date.now(),
   }
 
-  await runTransaction<void>('readwrite', (store, resolve, reject) => {
+  await runTransaction<void>('readwrite', (store, setResult, reject) => {
     const request = store.put(record)
-    request.onsuccess = () => resolve(undefined)
+    request.onsuccess = () => setResult(undefined)
     request.onerror = () => reject(request.error)
   })
 }
 
 export async function loadLocalDragonModel(): Promise<LocalDragonModel | null> {
-  return runTransaction<LocalDragonModel | null>('readonly', (store, resolve, reject) => {
+  return runTransaction<LocalDragonModel | null>('readonly', (store, setResult, reject) => {
     const request = store.get(WHITE_DRAGON_KEY)
     request.onsuccess = () => {
       const record = request.result as StoredDragonModel | undefined
       if (!record?.blob) {
-        resolve(null)
+        setResult(null)
         return
       }
-      resolve({
+      setResult({
         name: record.name,
         blob: record.blob,
         installedAt: record.installedAt,
@@ -112,9 +125,9 @@ export async function loadLocalDragonModel(): Promise<LocalDragonModel | null> {
 }
 
 export async function removeLocalDragonModel(): Promise<void> {
-  await runTransaction<void>('readwrite', (store, resolve, reject) => {
+  await runTransaction<void>('readwrite', (store, setResult, reject) => {
     const request = store.delete(WHITE_DRAGON_KEY)
-    request.onsuccess = () => resolve(undefined)
+    request.onsuccess = () => setResult(undefined)
     request.onerror = () => reject(request.error)
   })
 }
