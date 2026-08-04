@@ -15,6 +15,12 @@ interface OpfsTarget {
   writable: FileSystemWritableFileStream
 }
 
+export interface LocalRecording {
+  blob: Blob
+  filename: string
+  release: () => Promise<void>
+}
+
 export class LocalRecorder {
   private recorder: MediaRecorder | null = null
   private fallbackChunks: Blob[] = []
@@ -25,6 +31,7 @@ export class LocalRecorder {
   async start(stream: MediaStream): Promise<void> {
     this.mimeType = selectSupportedMimeType()
     this.fallbackChunks = []
+    this.writeChain = Promise.resolve()
     this.opfsTarget = await this.createOpfsTarget()
     this.recorder = new MediaRecorder(stream, this.mimeType ? { mimeType: this.mimeType } : undefined)
     this.recorder.addEventListener('dataavailable', (event) => {
@@ -40,7 +47,7 @@ export class LocalRecorder {
     this.recorder.start(1_000)
   }
 
-  async stop(): Promise<File> {
+  async stop(): Promise<LocalRecording> {
     if (!this.recorder) throw new Error('No hay una grabación activa.')
     const recorder = this.recorder
     await new Promise<void>((resolve, reject) => {
@@ -54,20 +61,36 @@ export class LocalRecorder {
     const downloadName = `facecam-${new Date().toISOString().replaceAll(':', '-')}.${extension}`
 
     if (this.opfsTarget) {
-      await this.opfsTarget.writable.close()
-      const handle = await this.opfsTarget.directory.getFileHandle(this.opfsTarget.filename)
+      const target = this.opfsTarget
+      await target.writable.close()
+      const handle = await target.directory.getFileHandle(target.filename)
       const storedFile = await handle.getFile()
-      const result = new File([storedFile], downloadName, { type: this.mimeType || storedFile.type })
-      await this.opfsTarget.directory.removeEntry(this.opfsTarget.filename)
+
       this.opfsTarget = null
       this.recorder = null
-      return result
+
+      return {
+        blob: storedFile,
+        filename: downloadName,
+        release: async () => {
+          try {
+            await target.directory.removeEntry(target.filename)
+          } catch (error) {
+            if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
+          }
+        },
+      }
     }
 
-    const result = new File(this.fallbackChunks, downloadName, { type: this.mimeType || 'video/webm' })
+    const result = new Blob(this.fallbackChunks, { type: this.mimeType || 'video/webm' })
     this.fallbackChunks = []
     this.recorder = null
-    return result
+
+    return {
+      blob: result,
+      filename: downloadName,
+      release: async () => undefined,
+    }
   }
 
   private async createOpfsTarget(): Promise<OpfsTarget | null> {
