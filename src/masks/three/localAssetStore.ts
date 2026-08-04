@@ -151,9 +151,7 @@ export function loadLocalDragonCalibration(): StaticDragonCalibration {
       facingReversed: typeof value.facingReversed === 'boolean'
         ? value.facingReversed
         : DEFAULT_STATIC_DRAGON_CALIBRATION.facingReversed,
-      coverageShield: typeof value.coverageShield === 'boolean'
-        ? value.coverageShield
-        : DEFAULT_STATIC_DRAGON_CALIBRATION.coverageShield,
+      coverageShield: false,
     }
   } catch {
     return { ...DEFAULT_STATIC_DRAGON_CALIBRATION }
@@ -162,7 +160,10 @@ export function loadLocalDragonCalibration(): StaticDragonCalibration {
 
 export function saveLocalDragonCalibration(calibration: StaticDragonCalibration): void {
   try {
-    window.localStorage.setItem(CALIBRATION_KEY, JSON.stringify(calibration))
+    window.localStorage.setItem(
+      CALIBRATION_KEY,
+      JSON.stringify({ ...calibration, coverageShield: false }),
+    )
   } catch (error) {
     console.warn('No fue posible guardar la calibración local del dragón.', error)
   }
