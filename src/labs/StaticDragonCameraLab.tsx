@@ -101,7 +101,11 @@ export function StaticDragonCameraLab() {
 
     const pose = estimateStaticDragonPose(lastResultRef.current)
     const renderer = dragonRendererRef.current
-    const rendered = renderer?.render(pose, calibrationRef.current) ?? false
+    const rendered = renderer?.render(
+      pose,
+      calibrationRef.current,
+      mirrorRef.current,
+    ) ?? false
 
     if (rendered && renderer) {
       context.save()
@@ -275,6 +279,15 @@ export function StaticDragonCameraLab() {
               <input
                 checked={calibration.facingReversed}
                 onChange={(event) => updateCalibration({ facingReversed: event.target.checked })}
+                type="checkbox"
+              />
+            </label>
+
+            <label className="toggle-row">
+              <span>Cobertura posterior</span>
+              <input
+                checked={calibration.coverageShield}
+                onChange={(event) => updateCalibration({ coverageShield: event.target.checked })}
                 type="checkbox"
               />
             </label>
