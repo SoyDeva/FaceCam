@@ -4,6 +4,7 @@ import { AuthPanel } from './auth/AuthPanel'
 import { CameraStudio } from './camera/CameraStudio'
 import { supabase } from './config/supabase'
 import { StaticDragonCameraLab } from './labs/StaticDragonCameraLab'
+import { MainDragonInstaller } from './masks/three/MainDragonInstaller'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -28,7 +29,12 @@ export default function App() {
 
   if (!session) return <div className="auth-shell"><AuthPanel /></div>
 
-  return dragonLabEnabled
-    ? <StaticDragonCameraLab />
-    : <CameraStudio userId={session.user.id} />
+  if (dragonLabEnabled) return <StaticDragonCameraLab />
+
+  return (
+    <>
+      <MainDragonInstaller />
+      <CameraStudio userId={session.user.id} />
+    </>
+  )
 }
