@@ -3,10 +3,12 @@ import type { Session } from '@supabase/supabase-js'
 import { AuthPanel } from './auth/AuthPanel'
 import { CameraStudio } from './camera/CameraStudio'
 import { supabase } from './config/supabase'
+import { StaticDragonCameraLab } from './labs/StaticDragonCameraLab'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const dragonLabEnabled = new URLSearchParams(window.location.search).get('dragonLab') === '1'
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data }) => {
@@ -24,5 +26,9 @@ export default function App() {
     return <div className="center-screen"><div className="loader" /><p>Abriendo FaceCam…</p></div>
   }
 
-  return session ? <CameraStudio userId={session.user.id} /> : <div className="auth-shell"><AuthPanel /></div>
+  if (!session) return <div className="auth-shell"><AuthPanel /></div>
+
+  return dragonLabEnabled
+    ? <StaticDragonCameraLab />
+    : <CameraStudio userId={session.user.id} />
 }
