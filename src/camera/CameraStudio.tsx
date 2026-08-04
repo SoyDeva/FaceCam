@@ -6,7 +6,7 @@ import { LocalRecorder } from '../recording/localRecorder'
 import { formatDuration } from '../shared/format'
 import { FaceTracker } from '../tracking/faceTracker'
 import type { UserSettings } from '../auth/types'
-import { listCameras, openCamera, stopStream, type CameraDevice } from './devices'
+import { describeMediaError, listCameras, openCamera, stopStream, type CameraDevice } from './devices'
 
 interface CameraStudioProps {
   userId: string
@@ -115,28 +115,59 @@ export function CameraStudio({ userId }: CameraStudioProps) {
 
   const activateCamera = useCallback(async (deviceId?: string) => {
     setStatus('requesting')
-    setMessage('Solicitando cámara, micrófono y modelo facial…')
+    setMessage('Solicitando permiso para usar la cámara…')
     stopStream(streamRef.current)
+    streamRef.current = null
+
     try {
-      const [stream] = await Promise.all([
-        openCamera(deviceId),
-        trackerRef.current.initialize(),
-      ])
+      const stream = await openCamera(deviceId)
       streamRef.current = stream
-      if (!videoRef.current) throw new Error('No se pudo preparar la vista previa.')
-      videoRef.current.srcObject = stream
-      await videoRef.current.play()
-      const availableCameras = await listCameras()
-      setCameras(availableCameras)
+
+      const video = videoRef.current
+      if (!video) throw new Error('No se pudo preparar la vista previa.')
+      video.muted = true
+      video.playsInline = true
+      video.srcObject = stream
+      await video.play()
+
+      try {
+        const availableCameras = await listCameras()
+        setCameras(availableCameras)
+      } catch (deviceError) {
+        console.warn('No fue posible enumerar las cámaras.', deviceError)
+      }
+
       const activeDeviceId = stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId ?? ''
       setSelectedCamera(activeDeviceId)
       setStatus('ready')
-      setMessage('Procesamiento local activo. La máscara actual es un prototipo técnico.')
+
+      const hasAudio = stream.getAudioTracks().length > 0
+      setMessage(
+        hasAudio
+          ? 'Cámara y micrófono activos. Preparando seguimiento facial…'
+          : 'Cámara activa. El micrófono no fue autorizado; el video se grabará sin audio.',
+      )
+
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
       animationFrameRef.current = requestAnimationFrame(renderLoop)
+
+      void trackerRef.current.initialize()
+        .then(() => {
+          setMessage(
+            hasAudio
+              ? 'Procesamiento local activo. La máscara actual es un prototipo técnico.'
+              : 'Cámara y máscara activas. El video se grabará sin audio.',
+          )
+        })
+        .catch((trackingError) => {
+          console.error('No fue posible iniciar el seguimiento facial.', trackingError)
+          setMessage('La cámara está activa, pero el seguimiento facial no pudo iniciarse en este dispositivo.')
+        })
     } catch (caught) {
+      stopStream(streamRef.current)
+      streamRef.current = null
       setStatus('error')
-      setMessage(caught instanceof Error ? caught.message : 'No fue posible activar la cámara.')
+      setMessage(describeMediaError(caught))
     }
   }, [renderLoop])
 
@@ -186,8 +217,11 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = file.name
+      anchor.style.display = 'none'
+      document.body.appendChild(anchor)
       anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 30 * 60 * 1_000)
       setStatus('ready')
       setElapsedMs(0)
       setMessage('Grabación terminada y enviada a descargas.')
