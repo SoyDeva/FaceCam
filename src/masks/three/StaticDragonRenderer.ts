@@ -7,11 +7,9 @@ import {
   Group,
   Material,
   Mesh,
-  MeshStandardMaterial,
   Object3D,
   OrthographicCamera,
   Scene,
-  SphereGeometry,
   SRGBColorSpace,
   Texture,
   Vector3,
@@ -38,7 +36,7 @@ export const DEFAULT_STATIC_DRAGON_CALIBRATION: StaticDragonCalibration = {
   yawMultiplier: 0.82,
   pitchMultiplier: 0.72,
   facingReversed: false,
-  coverageShield: true,
+  coverageShield: false,
 }
 
 export class StaticDragonRenderer {
@@ -49,7 +47,6 @@ export class StaticDragonRenderer {
   private readonly camera = new OrthographicCamera(-1, 1, 1, -1, 0.01, 20)
   private readonly modelContainer = new Group()
   private modelRoot: Object3D | null = null
-  private coverageShield: Mesh | null = null
   private modelWidth = 1
   private aspect = 1
 
@@ -113,35 +110,12 @@ export class StaticDragonRenderer {
       // head so rotations follow the user instead of swinging from the chest.
       const pivotY = bounds.min.y + size.y * 0.58
       gltf.scene.position.set(-center.x, -pivotY, -center.z)
-
-      // The source mesh has natural openings between horns and crest plates.
-      // A recessed ellipsoid fills only those rear gaps so real hair or skin is
-      // not exposed, while the detailed dragon geometry remains in front.
-      const depth = Math.max(size.z, size.x * 0.55)
-      const shield = new Mesh(
-        new SphereGeometry(0.5, 32, 20),
-        new MeshStandardMaterial({
-          color: 0xe4e6e2,
-          metalness: 0,
-          roughness: 0.88,
-        }),
-      )
-      shield.name = 'WhiteDragon_CoverageShield'
-      shield.position.set(
-        center.x,
-        bounds.min.y + size.y * 0.78,
-        center.z - depth * 0.18,
-      )
-      shield.scale.set(size.x * 0.72, size.y * 0.46, depth * 0.72)
-      gltf.scene.add(shield)
-
       gltf.scene.updateMatrixWorld(true)
       gltf.scene.traverse((object) => {
         if (object instanceof Mesh) object.frustumCulled = false
       })
 
       this.modelWidth = size.x
-      this.coverageShield = shield
       this.modelRoot = gltf.scene
       this.modelContainer.add(gltf.scene)
     } finally {
@@ -180,7 +154,6 @@ export class StaticDragonRenderer {
       0,
     )
     this.modelContainer.scale.setScalar(modelScale)
-    if (this.coverageShield) this.coverageShield.visible = calibration.coverageShield
 
     this.modelContainer.rotation.set(
       pose.pitch * calibration.pitchMultiplier,
@@ -214,7 +187,6 @@ export class StaticDragonRenderer {
       materials.forEach((material) => this.disposeMaterial(material))
     })
     this.modelRoot = null
-    this.coverageShield = null
   }
 
   private disposeMaterial(material: Material): void {
