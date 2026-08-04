@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "assetVersion": "0.0.0-placeholder",
+  "gates": {
+    "artDirection": {
+      "approved": false,
+      "evidence": []
+    },
+    "topologyAndLods": {
+      "approved": false,
+      "evidence": []
+    },
+    "pbrMaterials": {
+      "approved": false,
+      "evidence": []
+    },
+    "rigAndMorphTargets": {
+      "approved": false,
+      "evidence": []
+    },
+    "technicalIntegration": {
+      "approved": false,
+      "evidence": []
+    },
+    "mobilePerformance": {
+      "approved": false,
+      "evidence": []
+    },
+    "recordingStability": {
+      "approved": false,
+      "evidence": []
+    },
+    "finalVisualQuality": {
+      "approved": false,
+      "evidence": []
+    }
+  }
+}
