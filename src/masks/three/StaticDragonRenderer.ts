@@ -16,6 +16,7 @@ import {
   WebGLRenderer,
 } from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import type { StaticDragonHeadCalibration } from './headCalibration'
 import type { StaticDragonPoseEstimate } from './staticPose'
 import { resolveStaticDragonYaw } from './staticPose'
 
@@ -26,18 +27,18 @@ export interface StaticDragonCalibration {
   yawMultiplier: number
   pitchMultiplier: number
   facingReversed: boolean
-  coverageShield: boolean
 }
 
 export const DEFAULT_STATIC_DRAGON_CALIBRATION: StaticDragonCalibration = {
   scaleMultiplier: 1.74,
   offsetX: 0,
-  offsetY: 0.08,
+  offsetY: 0,
   yawMultiplier: 0.82,
   pitchMultiplier: 0.72,
   facingReversed: false,
-  coverageShield: false,
 }
+
+const MODEL_EYE_LINE_RATIO = 0.55
 
 export class StaticDragonRenderer {
   readonly canvas: HTMLCanvasElement
@@ -106,10 +107,11 @@ export class StaticDragonRenderer {
 
       this.disposeModel()
 
-      // The Tripo asset pivots at the neck base. Recenter it around the upper
-      // head so rotations follow the user instead of swinging from the chest.
-      const pivotY = bounds.min.y + size.y * 0.58
-      gltf.scene.position.set(-center.x, -pivotY, -center.z)
+      // Tripo does not expose semantic eye nodes in this asset. The measured
+      // eye line sits near 55% of the complete neck-to-horn bounds. Making that
+      // line the local origin lets the model eyes follow the user's eye anchor.
+      const modelEyeY = bounds.min.y + size.y * MODEL_EYE_LINE_RATIO
+      gltf.scene.position.set(-center.x, -modelEyeY, -center.z)
       gltf.scene.updateMatrixWorld(true)
       gltf.scene.traverse((object) => {
         if (object instanceof Mesh) object.frustumCulled = false
@@ -139,18 +141,21 @@ export class StaticDragonRenderer {
     pose: StaticDragonPoseEstimate,
     calibration: StaticDragonCalibration,
     mirrored: boolean,
+    headCalibration: StaticDragonHeadCalibration | null,
   ): boolean {
     this.renderer.clear()
-    if (!pose.visible || !this.modelRoot) return false
+    if (!pose.visible || !this.modelRoot || !headCalibration) return false
 
-    const faceWidthWorld = pose.faceWidth * this.aspect * 2
-    const modelScale = faceWidthWorld / this.modelWidth * calibration.scaleMultiplier
-    const centerX = (pose.centerX * 2 - 1) * this.aspect
-    const centerY = 1 - pose.centerY * 2
+    // Scale is derived exclusively from the frontal calibration captured at
+    // camera start. Current visible face width never changes the model scale.
+    const baseFaceWidthWorld = headCalibration.baseFaceWidth * this.aspect * 2
+    const modelScale = baseFaceWidthWorld / this.modelWidth * calibration.scaleMultiplier
+    const eyeX = (pose.eyeCenterX * 2 - 1) * this.aspect
+    const eyeY = 1 - pose.eyeCenterY * 2
 
     this.modelContainer.position.set(
-      centerX + calibration.offsetX * faceWidthWorld,
-      centerY + calibration.offsetY * faceWidthWorld,
+      eyeX + calibration.offsetX * baseFaceWidthWorld,
+      eyeY + calibration.offsetY * baseFaceWidthWorld,
       0,
     )
     this.modelContainer.scale.setScalar(modelScale)
