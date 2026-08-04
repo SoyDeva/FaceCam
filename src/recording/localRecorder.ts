@@ -5,6 +5,8 @@ const MIME_CANDIDATES = [
   'video/webm',
 ]
 
+const OPFS_CLEANUP_DELAY_MS = 30 * 60 * 1_000
+
 export function selectSupportedMimeType(): string {
   return MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? ''
 }
@@ -13,12 +15,6 @@ interface OpfsTarget {
   directory: FileSystemDirectoryHandle
   filename: string
   writable: FileSystemWritableFileStream
-}
-
-export interface LocalRecording {
-  blob: Blob
-  filename: string
-  release: () => Promise<void>
 }
 
 export class LocalRecorder {
@@ -47,7 +43,7 @@ export class LocalRecorder {
     this.recorder.start(1_000)
   }
 
-  async stop(): Promise<LocalRecording> {
+  async stop(): Promise<File> {
     if (!this.recorder) throw new Error('No hay una grabación activa.')
     const recorder = this.recorder
     await new Promise<void>((resolve, reject) => {
@@ -65,32 +61,28 @@ export class LocalRecorder {
       await target.writable.close()
       const handle = await target.directory.getFileHandle(target.filename)
       const storedFile = await handle.getFile()
+      const result = new File([storedFile], downloadName, { type: this.mimeType || storedFile.type })
 
+      this.scheduleOpfsCleanup(target)
       this.opfsTarget = null
       this.recorder = null
-
-      return {
-        blob: storedFile,
-        filename: downloadName,
-        release: async () => {
-          try {
-            await target.directory.removeEntry(target.filename)
-          } catch (error) {
-            if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
-          }
-        },
-      }
+      return result
     }
 
-    const result = new Blob(this.fallbackChunks, { type: this.mimeType || 'video/webm' })
+    const result = new File(this.fallbackChunks, downloadName, { type: this.mimeType || 'video/webm' })
     this.fallbackChunks = []
     this.recorder = null
+    return result
+  }
 
-    return {
-      blob: result,
-      filename: downloadName,
-      release: async () => undefined,
-    }
+  private scheduleOpfsCleanup(target: OpfsTarget): void {
+    globalThis.setTimeout(() => {
+      void target.directory.removeEntry(target.filename).catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'NotFoundError')) {
+          console.warn('No fue posible limpiar la grabación temporal.', error)
+        }
+      })
+    }, OPFS_CLEANUP_DELAY_MS)
   }
 
   private async createOpfsTarget(): Promise<OpfsTarget | null> {
