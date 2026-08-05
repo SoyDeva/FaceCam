@@ -11,13 +11,14 @@ on:
       - 'vite.config.ts'
       - 'tsconfig*.json'
       - '.github/workflows/publish-gh-pages.yml'
+      - '.github/workflows/publish-gh-pages-branch.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: publish-gh-pages
+  group: facecam-pages-deployment
   cancel-in-progress: true
 
 jobs:
@@ -33,7 +34,34 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      - name: Stamp deployment version
+        run: |
+          mkdir -p public
+          printf '{"sha":"%s","builtAt":"%s"}\n' \
+            "$GITHUB_SHA" \
+            "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            > public/version.json
+      - name: Build production bundle
+        env:
+          VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
+        run: npm run build
+      - name: Verify corrected installer bundle
+        run: |
+          set -euo pipefail
+          obsolete='El modelo guardado no contiene mandíbula y ambos parpadeos nativos.'
+          corrected='El modelo guardado no activó la mandíbula riggeada del dragón oficial.'
+
+          if grep -R -Fq "$obsolete" dist; then
+            echo "::error::El paquete contiene la validación antigua del dragón."
+            exit 1
+          fi
+
+          if ! grep -R -Fq "$corrected" dist; then
+            echo "::error::El paquete no contiene la validación corregida del dragón."
+            exit 1
+          fi
+
+          test -s dist/version.json
       - name: Publish dist to gh-pages
         run: |
           set -euo pipefail
