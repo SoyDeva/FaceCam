@@ -68,7 +68,7 @@ const LANDMARK = {
 
 const NEUTRAL_SAMPLE_TARGET = 24
 const SPEECH_SAMPLE_TARGET = 28
-const BLINK_SAMPLE_TARGET = 8
+const BLINK_SAMPLE_TARGET = 12
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value))
@@ -94,7 +94,16 @@ function eyeOpening(
   landmarks: NormalizedLandmark[],
   indices: readonly [number, number, number, number, number, number, number, number],
 ): number | null {
-  const [outerIndex, innerIndex, upperAIndex, lowerAIndex, upperBIndex, lowerBIndex, upperCIndex, lowerCIndex] = indices
+  const [
+    outerIndex,
+    innerIndex,
+    upperAIndex,
+    lowerAIndex,
+    upperBIndex,
+    lowerBIndex,
+    upperCIndex,
+    lowerCIndex,
+  ] = indices
   const outer = landmarks[outerIndex]
   const inner = landmarks[innerIndex]
   const upperA = landmarks[upperAIndex]
@@ -103,7 +112,9 @@ function eyeOpening(
   const lowerB = landmarks[lowerBIndex]
   const upperC = landmarks[upperCIndex]
   const lowerC = landmarks[lowerCIndex]
-  if (!outer || !inner || !upperA || !lowerA || !upperB || !lowerB || !upperC || !lowerC) return null
+  if (!outer || !inner || !upperA || !lowerA || !upperB || !lowerB || !upperC || !lowerC) {
+    return null
+  }
 
   const width = distance2d(outer, inner)
   if (!Number.isFinite(width) || width < 0.012) return null
@@ -189,6 +200,35 @@ function neutralMetrics(samples: DragonExpressionMetrics[]): DragonExpressionMet
   }
 }
 
+function geometryClosure(opening: number, openReference: number): number {
+  const minimumRange = Math.max(0.025, openReference * 0.62)
+  return clamp((openReference - opening) / minimumRange)
+}
+
+function blendshapeClosure(blink: number, openReference: number): number {
+  return clamp((blink - openReference) / Math.max(0.28, 0.92 - openReference))
+}
+
+function hasRealBilateralClosure(
+  metrics: DragonExpressionMetrics,
+  neutral: DragonExpressionMetrics,
+): boolean {
+  const leftGeometry = geometryClosure(metrics.leftEyeOpening, neutral.leftEyeOpening)
+  const rightGeometry = geometryClosure(metrics.rightEyeOpening, neutral.rightEyeOpening)
+  const leftBlendshape = blendshapeClosure(metrics.leftBlink, neutral.leftBlink)
+  const rightBlendshape = blendshapeClosure(metrics.rightBlink, neutral.rightBlink)
+
+  // Each eye must show its own geometric closure. MediaPipe's blendshape can
+  // support a short or partially occluded frame, but it can never allow one
+  // eye, a brow movement or a mislabeled signal to complete both-eye capture.
+  const leftClosed = leftGeometry >= 0.44
+    || (leftGeometry >= 0.28 && leftBlendshape >= 0.58)
+  const rightClosed = rightGeometry >= 0.44
+    || (rightGeometry >= 0.28 && rightBlendshape >= 0.58)
+
+  return leftClosed && rightClosed
+}
+
 function createCalibration(
   neutralSamples: DragonExpressionMetrics[],
   speechSamples: DragonExpressionMetrics[],
@@ -196,7 +236,10 @@ function createCalibration(
   capturedAt = Date.now(),
 ): DragonExpressionCalibration {
   const neutral = neutralMetrics(neutralSamples)
-  const jawSpeech = Math.max(neutral.jawOpen + 0.025, percentile(speechSamples.map((sample) => sample.jawOpen), 0.9))
+  const jawSpeech = Math.max(
+    neutral.jawOpen + 0.025,
+    percentile(speechSamples.map((sample) => sample.jawOpen), 0.9),
+  )
   const mouthHeightSpeech = Math.max(
     neutral.mouthHeight + 0.01,
     percentile(speechSamples.map((sample) => sample.mouthHeight), 0.9),
@@ -206,20 +249,20 @@ function createCalibration(
     percentile(speechSamples.map((sample) => sample.mouthWidth), 0.9),
   )
   const leftEyeClosed = Math.min(
-    neutral.leftEyeOpening * 0.7,
-    percentile(blinkSamples.map((sample) => sample.leftEyeOpening), 0.15),
+    neutral.leftEyeOpening * 0.72,
+    percentile(blinkSamples.map((sample) => sample.leftEyeOpening), 0.18),
   )
   const rightEyeClosed = Math.min(
-    neutral.rightEyeOpening * 0.7,
-    percentile(blinkSamples.map((sample) => sample.rightEyeOpening), 0.15),
+    neutral.rightEyeOpening * 0.72,
+    percentile(blinkSamples.map((sample) => sample.rightEyeOpening), 0.18),
   )
   const leftBlinkClosed = Math.max(
     neutral.leftBlink + 0.22,
-    percentile(blinkSamples.map((sample) => sample.leftBlink), 0.85),
+    percentile(blinkSamples.map((sample) => sample.leftBlink), 0.82),
   )
   const rightBlinkClosed = Math.max(
     neutral.rightBlink + 0.22,
-    percentile(blinkSamples.map((sample) => sample.rightBlink), 0.85),
+    percentile(blinkSamples.map((sample) => sample.rightBlink), 0.82),
   )
 
   const speechQuality = clamp(Math.max(
@@ -227,8 +270,16 @@ function createCalibration(
     (mouthHeightSpeech - neutral.mouthHeight) / 0.035,
     (mouthWidthSpeech - neutral.mouthWidth) / 0.12,
   ))
-  const leftBlinkQuality = clamp((neutral.leftEyeOpening - leftEyeClosed) / Math.max(0.04, neutral.leftEyeOpening * 0.58))
-  const rightBlinkQuality = clamp((neutral.rightEyeOpening - rightEyeClosed) / Math.max(0.04, neutral.rightEyeOpening * 0.58))
+  const leftGeometryQuality = clamp(
+    (neutral.leftEyeOpening - leftEyeClosed) / Math.max(0.035, neutral.leftEyeOpening * 0.62),
+  )
+  const rightGeometryQuality = clamp(
+    (neutral.rightEyeOpening - rightEyeClosed) / Math.max(0.035, neutral.rightEyeOpening * 0.62),
+  )
+  const leftSignalQuality = clamp((leftBlinkClosed - neutral.leftBlink) / 0.55)
+  const rightSignalQuality = clamp((rightBlinkClosed - neutral.rightBlink) / 0.55)
+  const leftBlinkQuality = leftGeometryQuality * 0.72 + leftSignalQuality * 0.28
+  const rightBlinkQuality = rightGeometryQuality * 0.72 + rightSignalQuality * 0.28
 
   return {
     version: 1,
@@ -246,7 +297,7 @@ function createCalibration(
     leftBlinkClosed,
     rightBlinkOpen: neutral.rightBlink,
     rightBlinkClosed,
-    quality: clamp((speechQuality * 1.4 + leftBlinkQuality + rightBlinkQuality) / 3.4),
+    quality: clamp((speechQuality * 1.2 + leftBlinkQuality * 1.1 + rightBlinkQuality * 1.1) / 3.4),
     capturedAt,
   }
 }
@@ -301,8 +352,11 @@ export class DragonExpressionCalibrator {
     }
 
     if (this.currentPhase === 'neutral') {
-      const eyesOpen = metrics.leftEyeOpening > 0.055 && metrics.rightEyeOpening > 0.055
-      const expressionNeutral = metrics.jawOpen < 0.45 && metrics.leftBlink < 0.55 && metrics.rightBlink < 0.55
+      const eyesOpen = metrics.leftEyeOpening > 0.065
+        && metrics.rightEyeOpening > 0.065
+        && metrics.leftBlink < 0.38
+        && metrics.rightBlink < 0.38
+      const expressionNeutral = metrics.jawOpen < 0.45
       if (!eyesOpen || !expressionNeutral) {
         return { accepted: false, phase: this.currentPhase, progress: this.progress, calibration: null }
       }
@@ -329,13 +383,7 @@ export class DragonExpressionCalibrator {
     }
 
     if (this.currentPhase === 'blink') {
-      const leftClosure = 1 - metrics.leftEyeOpening / Math.max(0.04, neutral.leftEyeOpening)
-      const rightClosure = 1 - metrics.rightEyeOpening / Math.max(0.04, neutral.rightEyeOpening)
-      const blendshapeClosure = Math.max(
-        metrics.leftBlink - neutral.leftBlink,
-        metrics.rightBlink - neutral.rightBlink,
-      )
-      if (Math.min(leftClosure, rightClosure) < 0.18 && blendshapeClosure < 0.16) {
+      if (!hasRealBilateralClosure(metrics, neutral)) {
         return { accepted: false, phase: this.currentPhase, progress: this.progress, calibration: null }
       }
 
@@ -344,7 +392,11 @@ export class DragonExpressionCalibrator {
         return { accepted: true, phase: this.currentPhase, progress: this.progress, calibration: null }
       }
 
-      const calibration = createCalibration(this.neutralSamples, this.speechSamples, this.blinkSamples)
+      const calibration = createCalibration(
+        this.neutralSamples,
+        this.speechSamples,
+        this.blinkSamples,
+      )
       this.running = false
       this.currentPhase = 'complete'
       return { accepted: true, phase: 'complete', progress: 1, calibration }
