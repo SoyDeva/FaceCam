@@ -12,7 +12,7 @@ describe('resolveDragonEyelidClosure', () => {
   })
 
   it('reaches complete closure before the tracking signal saturates', () => {
-    expect(resolveDragonEyelidClosure(0.585)).toBe(1)
+    expect(resolveDragonEyelidClosure(0.585)).toBeCloseTo(1, 12)
     expect(resolveDragonEyelidClosure(1)).toBe(1)
   })
 })

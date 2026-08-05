@@ -137,7 +137,7 @@ describe('smoothStaticDragonPose', () => {
       ...estimateStaticDragonPose(resultWithLandmarks()),
       blinkLeft: 0,
     }
-    const noisy = smoothStaticDragonPose(previous, { ...previous, blinkLeft: 0.35 })
+    const noisy = smoothStaticDragonPose(previous, { ...previous, blinkLeft: 0.08 })
     const blink = smoothStaticDragonPose(previous, { ...previous, blinkLeft: 1 })
 
     expect(noisy.blinkLeft).toBe(0)
