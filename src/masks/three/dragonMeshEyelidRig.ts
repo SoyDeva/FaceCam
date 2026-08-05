@@ -1,38 +1,54 @@
 import {
   Box3,
-  BufferAttribute,
-  DynamicDrawUsage,
-  Matrix4,
+  Color,
+  DoubleSide,
+  Group,
+  Material,
   Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
   Object3D,
+  Shape,
+  ShapeGeometry,
   Vector3,
 } from 'three'
 
 export interface DragonMeshEyelidBinding {
-  position: BufferAttribute
-  basePositions: Float32Array
-  leftDeltas: Float32Array
-  rightDeltas: Float32Array
-  lastLeft: number
-  lastRight: number
+  group: Group
+  upper: Mesh
+  lower: Mesh
+  seam: Mesh
+  radiusX: number
+  radiusY: number
+  lastBlink: number
 }
 
-interface EyeRegion {
+export interface DragonEyelidCoverPose {
+  closure: number
+  visible: boolean
+  upperOffset: number
+  lowerOffset: number
+  lidScaleY: number
+  seamOpacity: number
+}
+
+interface EyeAnchor {
   x: number
   y: number
+  z: number
   radiusX: number
   radiusY: number
   side: 'left' | 'right'
 }
 
-function clamp(value: number, min = 0, max = 1): number {
-  return Math.min(max, Math.max(min, value))
+interface EyeAccumulator {
+  count: number
+  min: Vector3
+  max: Vector3
 }
 
-function smoothstep(edge0: number, edge1: number, value: number): number {
-  if (edge0 === edge1) return value < edge0 ? 0 : 1
-  const normalized = clamp((value - edge0) / (edge1 - edge0))
-  return normalized * normalized * (3 - 2 * normalized)
+function clamp(value: number, min = 0, max = 1): number {
+  return Math.min(max, Math.max(min, value))
 }
 
 export function resolveDragonMeshBlink(blink: number): number {
@@ -41,26 +57,21 @@ export function resolveDragonMeshBlink(blink: number): number {
   return Math.pow(normalized, 0.66)
 }
 
-export function resolveDragonEyelidVertexWeight(
-  x: number,
-  y: number,
-  z: number,
-  eye: EyeRegion,
-  frontStart: number,
-  frontEnd: number,
-  centerGuard: number,
-): number {
-  if (eye.side === 'left' && x > -centerGuard) return 0
-  if (eye.side === 'right' && x < centerGuard) return 0
+export function resolveDragonEyelidCoverPose(
+  blink: number,
+  radiusY: number,
+): DragonEyelidCoverPose {
+  const closure = resolveDragonMeshBlink(blink)
+  const edgeOffset = radiusY * (1 - closure) * 0.94
 
-  const normalizedX = Math.abs(x - eye.x) / Math.max(0.000001, eye.radiusX)
-  const normalizedY = Math.abs(y - eye.y) / Math.max(0.000001, eye.radiusY)
-  const ellipticalDistance = Math.sqrt(
-    normalizedX * normalizedX + normalizedY * normalizedY,
-  )
-  const radialWeight = 1 - smoothstep(0.68, 1.12, ellipticalDistance)
-  const frontWeight = smoothstep(frontStart, frontEnd, z)
-  return clamp(radialWeight * frontWeight)
+  return {
+    closure,
+    visible: closure > 0.025,
+    upperOffset: edgeOffset,
+    lowerOffset: -edgeOffset,
+    lidScaleY: radiusY * Math.max(0.02, closure),
+    seamOpacity: clamp((closure - 0.68) / 0.32) * 0.58,
+  }
 }
 
 function normalizedObjectLabel(mesh: Mesh): string {
@@ -73,43 +84,244 @@ function normalizedObjectLabel(mesh: Mesh): string {
     .join(' ')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
 }
 
-function isDetachedEyeSurface(mesh: Mesh): boolean {
+function isLikelyEyeSurface(mesh: Mesh): boolean {
   const label = normalizedObjectLabel(mesh)
-  const explicitlyEyelid = /eye\s*lid|eyelid|lid|head|face|skin/.test(label)
-  const detachedEye = /iris|pupil|cornea|eyeball|eye\s*ball|lens/.test(label)
-  return detachedEye && !explicitlyEyelid
+  if (/eye\s*lid|eyelid|\blid\b|\bbrow\b/.test(label)) return false
+  return /\beye\b|iris|pupil|cornea|eyeball|eye\s*ball|lens/.test(label)
 }
 
-function writeWeightedClosureDelta(
-  localPosition: Vector3,
-  worldPosition: Vector3,
-  inverseWorld: Matrix4,
-  eye: EyeRegion,
-  weight: number,
-  modelSize: Vector3,
-  output: Float32Array,
-  offset: number,
-): void {
-  if (weight <= 0) return
+function isUnsafeFallbackSurface(mesh: Mesh): boolean {
+  const label = normalizedObjectLabel(mesh)
+  return /nose|nostril|snout|muzzle|jaw|mouth|tooth|teeth|tongue|horn/.test(label)
+}
 
-  const direction = worldPosition.y >= eye.y ? 1 : -1
-  const closureLine = eye.y - modelSize.y * 0.004
-  const closedSlit = modelSize.y * 0.0025
-  const horizontalDistance = Math.min(
-    1,
-    Math.abs(worldPosition.x - eye.x) / Math.max(0.000001, eye.radiusX),
-  )
+function createAccumulator(): EyeAccumulator {
+  return {
+    count: 0,
+    min: new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY),
+    max: new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY),
+  }
+}
 
-  const targetWorld = worldPosition.clone()
-  targetWorld.y = closureLine + direction * closedSlit
-  targetWorld.z += modelSize.z * 0.012 * (1 - horizontalDistance)
+function includePoint(accumulator: EyeAccumulator, point: Vector3): void {
+  accumulator.count += 1
+  accumulator.min.min(point)
+  accumulator.max.max(point)
+}
 
-  const targetLocal = targetWorld.applyMatrix4(inverseWorld)
-  output[offset] = (targetLocal.x - localPosition.x) * weight
-  output[offset + 1] = (targetLocal.y - localPosition.y) * weight
-  output[offset + 2] = (targetLocal.z - localPosition.z) * weight
+function collectEyeSurfaceBounds(root: Object3D): {
+  left: EyeAccumulator
+  right: EyeAccumulator
+} {
+  const left = createAccumulator()
+  const right = createAccumulator()
+  const local = new Vector3()
+  const world = new Vector3()
+
+  root.traverse((object) => {
+    if (!(object instanceof Mesh) || !isLikelyEyeSurface(object)) return
+    const position = object.geometry.getAttribute('position')
+    if (!position || position.itemSize < 3) return
+
+    for (let index = 0; index < position.count; index += 1) {
+      local.set(position.getX(index), position.getY(index), position.getZ(index))
+      world.copy(local).applyMatrix4(object.matrixWorld)
+      if (world.x < 0) includePoint(left, world)
+      if (world.x > 0) includePoint(right, world)
+    }
+  })
+
+  return { left, right }
+}
+
+function anchorFromAccumulator(
+  accumulator: EyeAccumulator,
+  side: 'left' | 'right',
+  size: Vector3,
+): EyeAnchor | null {
+  if (accumulator.count < 8) return null
+
+  const width = accumulator.max.x - accumulator.min.x
+  const height = accumulator.max.y - accumulator.min.y
+  const depth = accumulator.max.z - accumulator.min.z
+  if (
+    width <= 0
+    || height <= 0
+    || width > size.x * 0.34
+    || height > size.y * 0.24
+    || depth > size.z * 0.4
+  ) {
+    return null
+  }
+
+  return {
+    x: (accumulator.min.x + accumulator.max.x) * 0.5,
+    y: (accumulator.min.y + accumulator.max.y) * 0.5,
+    z: accumulator.max.z + size.z * 0.004,
+    radiusX: clamp(width * 0.66, size.x * 0.052, size.x * 0.115),
+    radiusY: clamp(height * 0.72, size.y * 0.034, size.y * 0.078),
+    side,
+  }
+}
+
+function percentile(values: number[], ratio: number): number | null {
+  if (values.length === 0) return null
+  values.sort((left, right) => left - right)
+  const index = Math.min(values.length - 1, Math.max(0, Math.floor((values.length - 1) * ratio)))
+  return values[index]
+}
+
+function resolveFallbackFront(
+  root: Object3D,
+  anchorX: number,
+  anchorY: number,
+  size: Vector3,
+  fallbackZ: number,
+): number {
+  const zValues: number[] = []
+  const local = new Vector3()
+  const world = new Vector3()
+
+  root.traverse((object) => {
+    if (!(object instanceof Mesh) || isUnsafeFallbackSurface(object)) return
+    const position = object.geometry.getAttribute('position')
+    if (!position || position.itemSize < 3) return
+
+    for (let index = 0; index < position.count; index += 1) {
+      local.set(position.getX(index), position.getY(index), position.getZ(index))
+      world.copy(local).applyMatrix4(object.matrixWorld)
+      if (
+        Math.abs(world.x - anchorX) <= size.x * 0.12
+        && Math.abs(world.y - anchorY) <= size.y * 0.085
+      ) {
+        zValues.push(world.z)
+      }
+    }
+  })
+
+  return (percentile(zValues, 0.9) ?? fallbackZ) + size.z * 0.004
+}
+
+function resolveEyelidColor(root: Object3D): Color {
+  let bestVertexCount = -1
+  let selected = new Color(0xdce8ec)
+
+  root.traverse((object) => {
+    if (!(object instanceof Mesh) || isLikelyEyeSurface(object)) return
+    const label = normalizedObjectLabel(object)
+    if (/mouth|tooth|teeth|tongue|horn|aura/.test(label)) return
+
+    const position = object.geometry.getAttribute('position')
+    const vertexCount = position?.count ?? 0
+    if (vertexCount <= bestVertexCount) return
+
+    const materials = Array.isArray(object.material) ? object.material : [object.material]
+    for (const material of materials) {
+      const candidate = material as Material & { color?: Color }
+      if (candidate.color?.isColor) {
+        selected = candidate.color.clone()
+        bestVertexCount = vertexCount
+        break
+      }
+    }
+  })
+
+  return selected.lerp(new Color(0xffffff), 0.08)
+}
+
+function createUpperLidShape(): Shape {
+  const shape = new Shape()
+  shape.moveTo(-1.08, 0)
+  shape.bezierCurveTo(-0.62, 0.08, 0.62, 0.08, 1.08, 0)
+  shape.bezierCurveTo(0.9, 0.78, 0.48, 1.02, 0, 1.04)
+  shape.bezierCurveTo(-0.48, 1.02, -0.9, 0.78, -1.08, 0)
+  shape.closePath()
+  return shape
+}
+
+function createLowerLidShape(): Shape {
+  const shape = new Shape()
+  shape.moveTo(-1.08, 0)
+  shape.bezierCurveTo(-0.62, -0.08, 0.62, -0.08, 1.08, 0)
+  shape.bezierCurveTo(0.9, -0.78, 0.48, -1.02, 0, -1.04)
+  shape.bezierCurveTo(-0.48, -1.02, -0.9, -0.78, -1.08, 0)
+  shape.closePath()
+  return shape
+}
+
+function createSeamShape(): Shape {
+  const shape = new Shape()
+  shape.moveTo(-1.04, 0)
+  shape.bezierCurveTo(-0.58, 0.045, 0.58, 0.045, 1.04, 0)
+  shape.bezierCurveTo(0.58, -0.045, -0.58, -0.045, -1.04, 0)
+  shape.closePath()
+  return shape
+}
+
+function createBinding(
+  root: Object3D,
+  anchor: EyeAnchor,
+  eyelidColor: Color,
+  size: Vector3,
+): DragonMeshEyelidBinding {
+  const group = new Group()
+  group.name = `WhiteDragon_${anchor.side}_AnatomicalEyelid`
+  group.position.copy(root.worldToLocal(new Vector3(anchor.x, anchor.y, anchor.z)))
+
+  const lidMaterial = new MeshStandardMaterial({
+    color: eyelidColor,
+    roughness: 0.78,
+    metalness: 0.025,
+    emissive: eyelidColor.clone().multiplyScalar(0.035),
+    emissiveIntensity: 0.35,
+    side: DoubleSide,
+    depthTest: true,
+    depthWrite: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  })
+  const seamMaterial = new MeshBasicMaterial({
+    color: eyelidColor.clone().multiplyScalar(0.38),
+    transparent: true,
+    opacity: 0,
+    side: DoubleSide,
+    depthTest: true,
+    depthWrite: false,
+  })
+
+  const upper = new Mesh(new ShapeGeometry(createUpperLidShape(), 18), lidMaterial)
+  const lower = new Mesh(new ShapeGeometry(createLowerLidShape(), 18), lidMaterial.clone())
+  const seam = new Mesh(new ShapeGeometry(createSeamShape(), 18), seamMaterial)
+
+  upper.name = `${group.name}_Upper`
+  lower.name = `${group.name}_Lower`
+  seam.name = `${group.name}_Seam`
+  upper.frustumCulled = false
+  lower.frustumCulled = false
+  seam.frustumCulled = false
+  upper.renderOrder = 25
+  lower.renderOrder = 25
+  seam.renderOrder = 26
+  upper.position.z = size.z * 0.001
+  lower.position.z = size.z * 0.0012
+  seam.position.z = size.z * 0.0018
+
+  group.add(upper, lower, seam)
+  root.add(group)
+
+  return {
+    group,
+    upper,
+    lower,
+    seam,
+    radiusX: anchor.radiusX,
+    radiusY: anchor.radiusY,
+    lastBlink: Number.NaN,
+  }
 }
 
 export function createDragonMeshEyelidRig(
@@ -119,119 +331,60 @@ export function createDragonMeshEyelidRig(
   center: Vector3,
   modelEyeY: number,
 ): DragonMeshEyelidBinding[] {
-  const eyeY = bounds.min.y + size.y * 0.575 - modelEyeY
-  const leftEye: EyeRegion = {
-    x: -size.x * 0.17,
-    y: eyeY,
-    radiusX: size.x * 0.145,
-    radiusY: size.y * 0.105,
-    side: 'left',
-  }
-  const rightEye: EyeRegion = {
-    x: size.x * 0.17,
-    y: eyeY,
-    radiusX: size.x * 0.145,
-    radiusY: size.y * 0.105,
-    side: 'right',
-  }
-  const frontStart = -size.z * 0.05
-  const frontEnd = bounds.max.z - center.z
-  const centerGuard = size.x * 0.028
-  const bindings: DragonMeshEyelidBinding[] = []
-
   root.updateMatrixWorld(true)
-  root.traverse((object) => {
-    if (!(object instanceof Mesh) || isDetachedEyeSurface(object)) return
 
-    const geometry = object.geometry.clone()
-    const position = geometry.getAttribute('position')
-    if (!(position instanceof BufferAttribute) || position.itemSize < 3) {
-      geometry.dispose()
-      return
-    }
+  const eyeY = bounds.min.y + size.y * 0.575 - modelEyeY
+  const fallbackFront = bounds.max.z - center.z - size.z * 0.035
+  const detected = collectEyeSurfaceBounds(root)
 
-    const vertexCount = position.count
-    const basePositions = new Float32Array(vertexCount * 3)
-    const leftDeltas = new Float32Array(vertexCount * 3)
-    const rightDeltas = new Float32Array(vertexCount * 3)
-    const inverseWorld = object.matrixWorld.clone().invert()
-    const localPosition = new Vector3()
-    const worldPosition = new Vector3()
-    let affectedVertices = 0
+  const fallbackLeftX = -size.x * 0.17
+  const fallbackRightX = size.x * 0.17
+  const left = anchorFromAccumulator(detected.left, 'left', size) ?? {
+    x: fallbackLeftX,
+    y: eyeY,
+    z: resolveFallbackFront(root, fallbackLeftX, eyeY, size, fallbackFront),
+    radiusX: size.x * 0.098,
+    radiusY: size.y * 0.058,
+    side: 'left' as const,
+  }
+  const right = anchorFromAccumulator(detected.right, 'right', size) ?? {
+    x: fallbackRightX,
+    y: eyeY,
+    z: resolveFallbackFront(root, fallbackRightX, eyeY, size, fallbackFront),
+    radiusX: size.x * 0.098,
+    radiusY: size.y * 0.058,
+    side: 'right' as const,
+  }
 
-    for (let index = 0; index < vertexCount; index += 1) {
-      const offset = index * 3
-      localPosition.fromBufferAttribute(position, index)
-      basePositions[offset] = localPosition.x
-      basePositions[offset + 1] = localPosition.y
-      basePositions[offset + 2] = localPosition.z
-      worldPosition.copy(localPosition).applyMatrix4(object.matrixWorld)
+  const eyelidColor = resolveEyelidColor(root)
+  const bindings = [
+    createBinding(root, left, eyelidColor, size),
+    createBinding(root, right, eyelidColor, size),
+  ]
 
-      const leftWeight = resolveDragonEyelidVertexWeight(
-        worldPosition.x,
-        worldPosition.y,
-        worldPosition.z,
-        leftEye,
-        frontStart,
-        frontEnd,
-        centerGuard,
-      )
-      const rightWeight = resolveDragonEyelidVertexWeight(
-        worldPosition.x,
-        worldPosition.y,
-        worldPosition.z,
-        rightEye,
-        frontStart,
-        frontEnd,
-        centerGuard,
-      )
-
-      if (leftWeight > 0.001) {
-        writeWeightedClosureDelta(
-          localPosition,
-          worldPosition,
-          inverseWorld,
-          leftEye,
-          leftWeight,
-          size,
-          leftDeltas,
-          offset,
-        )
-        affectedVertices += 1
-      }
-      if (rightWeight > 0.001) {
-        writeWeightedClosureDelta(
-          localPosition,
-          worldPosition,
-          inverseWorld,
-          rightEye,
-          rightWeight,
-          size,
-          rightDeltas,
-          offset,
-        )
-        affectedVertices += 1
-      }
-    }
-
-    if (affectedVertices === 0) {
-      geometry.dispose()
-      return
-    }
-
-    object.geometry = geometry
-    position.setUsage(DynamicDrawUsage)
-    bindings.push({
-      position,
-      basePositions,
-      leftDeltas,
-      rightDeltas,
-      lastLeft: -1,
-      lastRight: -1,
-    })
-  })
-
+  applyDragonMeshEyelidRig(bindings, 0, 0)
   return bindings
+}
+
+function applyBinding(binding: DragonMeshEyelidBinding, blink: number): void {
+  const pose = resolveDragonEyelidCoverPose(blink, binding.radiusY)
+  if (Number.isFinite(binding.lastBlink) && Math.abs(pose.closure - binding.lastBlink) <= 0.004) {
+    return
+  }
+
+  binding.upper.visible = pose.visible
+  binding.lower.visible = pose.visible
+  binding.seam.visible = pose.seamOpacity > 0.01
+
+  binding.upper.position.y = pose.upperOffset
+  binding.lower.position.y = pose.lowerOffset
+  binding.upper.scale.set(binding.radiusX, pose.lidScaleY, 1)
+  binding.lower.scale.set(binding.radiusX, pose.lidScaleY, 1)
+  binding.seam.scale.set(binding.radiusX, binding.radiusY, 1)
+
+  const seamMaterial = binding.seam.material as MeshBasicMaterial
+  seamMaterial.opacity = pose.seamOpacity
+  binding.lastBlink = pose.closure
 }
 
 export function applyDragonMeshEyelidRig(
@@ -239,35 +392,6 @@ export function applyDragonMeshEyelidRig(
   blinkLeft: number,
   blinkRight: number,
 ): void {
-  const left = resolveDragonMeshBlink(blinkLeft)
-  const right = resolveDragonMeshBlink(blinkRight)
-
-  for (const binding of bindings) {
-    if (
-      Math.abs(left - binding.lastLeft) <= 0.004
-      && Math.abs(right - binding.lastRight) <= 0.004
-    ) {
-      continue
-    }
-
-    const vertexCount = binding.position.count
-    for (let index = 0; index < vertexCount; index += 1) {
-      const offset = index * 3
-      binding.position.setXYZ(
-        index,
-        binding.basePositions[offset]
-          + binding.leftDeltas[offset] * left
-          + binding.rightDeltas[offset] * right,
-        binding.basePositions[offset + 1]
-          + binding.leftDeltas[offset + 1] * left
-          + binding.rightDeltas[offset + 1] * right,
-        binding.basePositions[offset + 2]
-          + binding.leftDeltas[offset + 2] * left
-          + binding.rightDeltas[offset + 2] * right,
-      )
-    }
-    binding.position.needsUpdate = true
-    binding.lastLeft = left
-    binding.lastRight = right
-  }
+  if (bindings[0]) applyBinding(bindings[0], blinkLeft)
+  if (bindings[1]) applyBinding(bindings[1], blinkRight)
 }

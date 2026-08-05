@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  resolveDragonEyelidVertexWeight,
+  resolveDragonEyelidCoverPose,
   resolveDragonMeshBlink,
 } from './dragonMeshEyelidRig'
 
@@ -19,30 +19,33 @@ describe('resolveDragonMeshBlink', () => {
   })
 })
 
-describe('resolveDragonEyelidVertexWeight', () => {
-  const leftEye = {
-    x: -0.17,
-    y: 0.05,
-    radiusX: 0.145,
-    radiusY: 0.105,
-    side: 'left' as const,
-  }
+describe('resolveDragonEyelidCoverPose', () => {
+  const radiusY = 0.1
 
-  it('targets the dragon eye region strongly', () => {
-    expect(
-      resolveDragonEyelidVertexWeight(-0.17, 0.05, 0.4, leftEye, -0.05, 0.5, 0.028),
-    ).toBeGreaterThan(0.8)
+  it('keeps both independent eyelid covers hidden at rest', () => {
+    const pose = resolveDragonEyelidCoverPose(0.08, radiusY)
+    expect(pose.visible).toBe(false)
+    expect(pose.closure).toBe(0)
+    expect(pose.upperOffset).toBeCloseTo(radiusY * 0.94)
+    expect(pose.lowerOffset).toBeCloseTo(-radiusY * 0.94)
   })
 
-  it('does not deform the central snout', () => {
-    expect(
-      resolveDragonEyelidVertexWeight(0, 0.05, 0.4, leftEye, -0.05, 0.5, 0.028),
-    ).toBe(0)
+  it('moves the upper and lower lids toward the eye center during a blink', () => {
+    const open = resolveDragonEyelidCoverPose(0.08, radiusY)
+    const blinking = resolveDragonEyelidCoverPose(0.35, radiusY)
+
+    expect(blinking.visible).toBe(true)
+    expect(Math.abs(blinking.upperOffset)).toBeLessThan(Math.abs(open.upperOffset))
+    expect(Math.abs(blinking.lowerOffset)).toBeLessThan(Math.abs(open.lowerOffset))
+    expect(blinking.lidScaleY).toBeGreaterThan(radiusY * 0.68)
   })
 
-  it('does not deform the rear of the head', () => {
-    expect(
-      resolveDragonEyelidVertexWeight(-0.17, 0.05, -0.2, leftEye, -0.05, 0.5, 0.028),
-    ).toBe(0)
+  it('meets both lids at the center without moving any facial vertices', () => {
+    const closed = resolveDragonEyelidCoverPose(0.52, radiusY)
+    expect(closed.closure).toBe(1)
+    expect(closed.upperOffset).toBe(0)
+    expect(closed.lowerOffset).toBe(-0)
+    expect(closed.lidScaleY).toBe(radiusY)
+    expect(closed.seamOpacity).toBeGreaterThan(0.5)
   })
 })
