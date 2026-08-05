@@ -3,6 +3,7 @@ import { Mesh, type Box3, type Object3D, type Vector3 } from 'three'
 const BLINK_DEAD_ZONE = 0.02
 const LEFT_BLINK_ALIASES = ['eyeBlinkLeft', 'blinkLeft'] as const
 const RIGHT_BLINK_ALIASES = ['eyeBlinkRight', 'blinkRight'] as const
+const V6_RIG_VERSION = '6.0.0'
 
 /**
  * Each binding points only to morph-target influence slots authored inside
@@ -13,10 +14,21 @@ export interface DragonMeshEyelidBinding {
   influences: number[]
   leftIndex?: number
   rightIndex?: number
+  selfTestEnabled: boolean
+  selfTestStartedAt: number | null
 }
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const amount = clamp((value - edge0) / Math.max(0.0001, edge1 - edge0))
+  return amount * amount * (3 - 2 * amount)
+}
+
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
 function normalizedMorphName(value: string): string {
@@ -38,11 +50,25 @@ function resolveMorphIndex(
   return undefined
 }
 
+function resolveSelfTestInfluence(binding: DragonMeshEyelidBinding, now: number): number {
+  if (!binding.selfTestEnabled) return 0
+  if (binding.selfTestStartedAt === null) binding.selfTestStartedAt = now
+
+  const elapsed = now - binding.selfTestStartedAt
+  if (elapsed < 250) return 0
+  if (elapsed < 475) return smoothstep(250, 475, elapsed)
+  if (elapsed < 875) return 1
+  if (elapsed < 1125) return 1 - smoothstep(875, 1125, elapsed)
+
+  binding.selfTestEnabled = false
+  return 0
+}
+
 /**
- * The v5 GLB stores complete anatomical eye closure at morph influence 1.
- * The incoming expression already contains noise rejection, so this final
- * response curve prioritizes a clearly visible closure instead of leaving
- * natural blinks at an imperceptible fraction of the authored morph travel.
+ * The v6 GLB stores complete eye closure at morph influence 1. The incoming
+ * expression already contains noise rejection, so this final response curve
+ * prioritizes a clearly visible closure instead of leaving natural blinks at
+ * an imperceptible fraction of the authored morph travel.
  */
 export function resolveNativeDragonBlinkInfluence(blink: number): number {
   const safeBlink = clamp(blink)
@@ -52,7 +78,7 @@ export function resolveNativeDragonBlinkInfluence(blink: number): number {
     (safeBlink - BLINK_DEAD_ZONE) / (1 - BLINK_DEAD_ZONE),
   )
   const eased = normalized * normalized * (3 - 2 * normalized)
-  return clamp(Math.pow(eased, 0.46) * 1.08)
+  return clamp(Math.pow(eased, 0.42) * 1.12)
 }
 
 export function createDragonMeshEyelidRig(
@@ -75,7 +101,16 @@ export function createDragonMeshEyelidRig(
     const rightIndex = resolveMorphIndex(dictionary, RIGHT_BLINK_ALIASES)
     if (leftIndex === undefined && rightIndex === undefined) return
 
-    bindings.push({ influences, leftIndex, rightIndex })
+    const rigVersion = String(object.userData?.faceCamRigVersion ?? '')
+    const meshName = normalizedMorphName(object.name)
+    const isV6Rig = rigVersion === V6_RIG_VERSION || meshName.includes('v6')
+    bindings.push({
+      influences,
+      leftIndex,
+      rightIndex,
+      selfTestEnabled: isV6Rig,
+      selfTestStartedAt: null,
+    })
   })
 
   return bindings
@@ -86,10 +121,15 @@ export function applyDragonMeshEyelidRig(
   blinkLeft: number,
   blinkRight: number,
 ): void {
-  const leftInfluence = resolveNativeDragonBlinkInfluence(blinkLeft)
-  const rightInfluence = resolveNativeDragonBlinkInfluence(blinkRight)
+  const now = nowMs()
+  const liveLeft = resolveNativeDragonBlinkInfluence(blinkLeft)
+  const liveRight = resolveNativeDragonBlinkInfluence(blinkRight)
 
   for (const binding of bindings) {
+    const selfTest = resolveSelfTestInfluence(binding, now)
+    const leftInfluence = Math.max(liveLeft, selfTest)
+    const rightInfluence = Math.max(liveRight, selfTest)
+
     if (binding.leftIndex !== undefined) {
       binding.influences[binding.leftIndex] = leftInfluence
     }

@@ -9,8 +9,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v5.glb'
-const OFFICIAL_MODEL_SHA256 = '2974535b1e3651d089b00b675f5c9e4c135cd3f59427a6fc9ebbf67a735e0114'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v6.glb'
+const OFFICIAL_MODEL_SHA256 = '73804176aa861c52d2a61bc0d31a9ea4dcc45365197ac86bf861233040a19a96'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -35,12 +35,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // The v5 asset stores jawOpen plus both anatomical eyelid morphs inside
-    // the GLB. The SHA-256 check below guarantees that this is the exact model
-    // whose visible eye sockets were inspected at influence 0 and 1.
+    // The SHA-256 check guarantees the exact v6 GLB whose eye morphs are
+    // centered on the two visible sockets. No runtime replacement geometry is
+    // accepted; the renderer must find the facial morph rig in the file.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó el rig facial del Dragón Blanco v5.',
+        'El modelo guardado no activó el rig facial del Dragón Blanco v6.',
       )
     }
   } finally {
@@ -52,7 +52,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco riggeado v5 de FaceCam.',
+      'El archivo no corresponde al Dragón Blanco riggeado v6 de FaceCam.',
     )
   }
 
@@ -79,11 +79,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v5 con los párpados reconstruidos en la malla original.')
+          setMessage('Instala el dragón v6 con los morphs centrados en los ojos visibles.')
           return
         }
 
-        setMessage('Verificando el GLB v5 y el cierre visible de ambas cuencas…')
+        setMessage('Verificando el GLB v6 y sus dos cierres oculares…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -94,7 +94,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior. Selecciona el archivo v5 con los párpados anatómicos.',
+            'FaceCam retiró el GLB anterior. Selecciona el archivo v6 corregido.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -106,7 +106,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco riggeado v5 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco riggeado v6 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -135,11 +135,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v5 y los morph targets anatómicos de ambos párpados…')
+    setMessage('Verificando el GLB v6 y los morph targets de los ojos visibles…')
 
     try {
       await install(file)
-      setMessage('Dragón v5 instalado. Reiniciando FaceCam y recalibrando los ojos…')
+      setMessage('Dragón v6 instalado. Reiniciando FaceCam y probando los ojos…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -174,7 +174,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco riggeado v5
+        Dragón Blanco riggeado v6
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -196,7 +196,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v5'}
+            : 'Seleccionar dragón v6'}
       </button>
     </aside>
   )

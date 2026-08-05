@@ -98,10 +98,9 @@ function normalizedClosure(
 }
 
 /**
- * MediaPipe's eyeBlink channels are sufficiently stable to drive a visible
- * blink without waiting for the guided mouth calibration. Calibration adds
- * geometric evidence and personal ranges later, but it must never be a gate
- * that leaves the GLB eyes permanently static.
+ * MediaPipe's eyeBlink channels support the signal, but some devices report
+ * them weakly or not at all. The geometric eyelid opening therefore provides
+ * an independent live path that works before and during guided calibration.
  */
 function directBlinkEvidence(rawBlink: number): number {
   if (!Number.isFinite(rawBlink) || rawBlink <= 0.08) return 0
@@ -110,14 +109,27 @@ function directBlinkEvidence(rawBlink: number): number {
   return clamp(Math.pow(activated, 0.52))
 }
 
+function directGeometryBlinkEvidence(opening: number): number {
+  if (!Number.isFinite(opening)) return 0
+  const closure = 1 - smoothstep(0.06, 0.145, opening)
+  if (closure < 0.04) return 0
+  return clamp(Math.pow(closure, 0.72))
+}
+
 export function estimateDragonExpression(
   result: FaceLandmarkerResult | null,
   calibration: DragonExpressionCalibration | null = null,
 ): DragonExpressionState {
   const scores = blendshapeMap(result)
-  const directLeftBlink = directBlinkEvidence(score(scores, 'eyeBlinkLeft'))
-  const directRightBlink = directBlinkEvidence(score(scores, 'eyeBlinkRight'))
   const metrics = extractDragonExpressionMetrics(result)
+  const directLeftBlink = Math.max(
+    directBlinkEvidence(score(scores, 'eyeBlinkLeft')),
+    metrics ? directGeometryBlinkEvidence(metrics.leftEyeOpening) : 0,
+  )
+  const directRightBlink = Math.max(
+    directBlinkEvidence(score(scores, 'eyeBlinkRight')),
+    metrics ? directGeometryBlinkEvidence(metrics.rightEyeOpening) : 0,
+  )
 
   if (!metrics) {
     return {
@@ -127,9 +139,8 @@ export function estimateDragonExpression(
     }
   }
 
-  // Eyes must respond immediately after face detection, including while the
-  // user is performing or repeating the guided calibration. Mouth articulation
-  // remains calibrated because its neutral range varies much more by user.
+  // Eyes respond immediately after face detection. Mouth articulation remains
+  // calibrated because its neutral range varies much more by user.
   if (!calibration) {
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
@@ -140,9 +151,7 @@ export function estimateDragonExpression(
 
   // Lip separation is the articulation clock. MediaPipe's jawOpen channel can
   // remain elevated across a whole sentence, so it only supports the vertical
-  // lip signal instead of taking control through a max(). This preserves the
-  // small closures between syllables and reserves full travel for a genuinely
-  // large opening.
+  // lip signal instead of taking control through a max().
   const lipEvidence = normalizeLinearRange(
     metrics.mouthHeight,
     calibration.mouthHeightNeutral,
