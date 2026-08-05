@@ -203,7 +203,7 @@ export function estimateDragonExpression(
 }
 
 function stableJawTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.14) return 0
+  if (previous < 0.035 && candidate < 0.18) return 0
   if (previous >= 0.035 && candidate < 0.13) return 0
   return candidate
 }
