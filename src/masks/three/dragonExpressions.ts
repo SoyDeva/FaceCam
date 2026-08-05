@@ -242,7 +242,7 @@ function stableJawTarget(previous: number, candidate: number): number {
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.075) return 0
+  if (previous < 0.035 && candidate < 0.1) return 0
   if (previous >= 0.035 && candidate < 0.025) return 0
   return candidate
 }
