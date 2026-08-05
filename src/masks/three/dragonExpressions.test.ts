@@ -60,9 +60,14 @@ describe('estimateDragonExpression', () => {
     expect(expression.browRaise).toBeGreaterThan(0.7)
   })
 
-  it('responds to small jaw values used during normal speech', () => {
+  it('uses most of the jaw morph during ordinary speech', () => {
     const expression = estimateDragonExpression(resultWithScores({ jawOpen: 0.06 }))
-    expect(expression.jawOpen).toBeGreaterThan(0.3)
+    expect(expression.jawOpen).toBeGreaterThan(0.65)
+  })
+
+  it('reacts to very small jaw values reported by mobile cameras', () => {
+    const expression = estimateDragonExpression(resultWithScores({ jawOpen: 0.015 }))
+    expect(expression.jawOpen).toBeGreaterThan(0.25)
   })
 
   it('uses small lip separation when the jaw blendshape is weak', () => {
@@ -77,7 +82,12 @@ describe('estimateDragonExpression', () => {
     landmarks[14] = landmark(0.5, 0.57)
 
     const expression = estimateDragonExpression(resultWithScores({ jawOpen: 0.008 }, landmarks))
-    expect(expression.jawOpen).toBeGreaterThan(0.2)
+    expect(expression.jawOpen).toBeGreaterThan(0.65)
+  })
+
+  it('keeps a true neutral signal closed', () => {
+    const expression = estimateDragonExpression(resultWithScores({ jawOpen: 0 }))
+    expect(expression.jawOpen).toBe(0)
   })
 
   it('responds decisively to a modest blink score', () => {
@@ -115,13 +125,13 @@ describe('smoothDragonExpression', () => {
     const smoothed = smoothDragonExpression(NEUTRAL_DRAGON_EXPRESSION, next, 0.25)
 
     expect(smoothed.blinkLeft).toBeGreaterThan(smoothed.jawOpen)
-    expect(smoothed.jawOpen).toBeGreaterThan(0.8)
+    expect(smoothed.jawOpen).toBeGreaterThan(0.9)
     expect(smoothed.blinkLeft).toBeGreaterThan(0.95)
   })
 
   it('closes the jaw quickly enough to articulate consecutive syllables', () => {
     const previous = { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 1 }
     const smoothed = smoothDragonExpression(previous, NEUTRAL_DRAGON_EXPRESSION, 0.25)
-    expect(smoothed.jawOpen).toBeLessThan(0.35)
+    expect(smoothed.jawOpen).toBeLessThan(0.25)
   })
 })
