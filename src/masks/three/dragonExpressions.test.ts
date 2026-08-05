@@ -17,6 +17,7 @@ function resultFor(
   eyeOpening: number,
   blink: number,
   mouthWidth = 0.16,
+  rightBlink = blink,
 ): FaceLandmarkerResult {
   const landmarks = Array.from({ length: 478 }, () => landmark(0.5, 0.5))
   landmarks[10] = landmark(0.5, 0.2)
@@ -53,7 +54,7 @@ function resultFor(
       categories: [
         { categoryName: 'jawOpen', score: jawOpen, index: 0, displayName: '' },
         { categoryName: 'eyeBlinkLeft', score: blink, index: 1, displayName: '' },
-        { categoryName: 'eyeBlinkRight', score: blink, index: 2, displayName: '' },
+        { categoryName: 'eyeBlinkRight', score: rightBlink, index: 2, displayName: '' },
       ],
       headIndex: 0,
       headName: '',
@@ -83,9 +84,34 @@ const calibration: DragonExpressionCalibration = {
 }
 
 describe('estimateDragonExpression', () => {
-  it('stays neutral until a guided calibration exists', () => {
-    expect(estimateDragonExpression(resultFor(0.12, 0.03, 0.14, 0.02), null))
-      .toEqual(NEUTRAL_DRAGON_EXPRESSION)
+  it('drives both eye morphs before guided calibration exists', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.12, 0.03, 0.14, 0.42),
+      null,
+    )
+
+    expect(expression.jawOpen).toBe(0)
+    expect(expression.blinkLeft).toBeGreaterThan(0.75)
+    expect(expression.blinkRight).toBeGreaterThan(0.75)
+  })
+
+  it('keeps each uncalibrated eye independent', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.04, 0.012, 0.14, 0.42, 0.16, 0.02),
+      null,
+    )
+
+    expect(expression.blinkLeft).toBeGreaterThan(0.75)
+    expect(expression.blinkRight).toBe(0)
+  })
+
+  it('rejects open-eye blendshape noise before calibration', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.04, 0.012, 0.14, 0.1),
+      null,
+    )
+
+    expect(expression).toEqual(NEUTRAL_DRAGON_EXPRESSION)
   })
 
   it('holds realistic camera noise completely closed', () => {
@@ -130,16 +156,16 @@ describe('estimateDragonExpression', () => {
     expect(expression.blinkRight).toBeGreaterThan(0.75)
   })
 
-  it('keeps a short natural blink visible even below the guided closed-eye score', () => {
+  it('keeps a short natural blink visibly above half travel', () => {
     const expression = estimateDragonExpression(resultFor(0.04, 0.012, 0.125, 0.25), calibration)
-    expect(expression.blinkLeft).toBeGreaterThan(0.15)
-    expect(expression.blinkRight).toBeGreaterThan(0.15)
+    expect(expression.blinkLeft).toBeGreaterThan(0.5)
+    expect(expression.blinkRight).toBeGreaterThan(0.5)
   })
 })
 
 describe('smoothDragonExpression', () => {
   it('rejects weak neutral jitter', () => {
-    const next = { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.08, blinkLeft: 0.08 }
+    const next = { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.08, blinkLeft: 0.06 }
     expect(smoothDragonExpression(NEUTRAL_DRAGON_EXPRESSION, next)).toEqual(NEUTRAL_DRAGON_EXPRESSION)
   })
 
