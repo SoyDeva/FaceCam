@@ -83,6 +83,68 @@ function midpoint(
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
 }
 
+/**
+ * A dead-band followed by adaptive interpolation removes sub-pixel camera
+ * noise without making intentional head movements feel heavy. Motion inside
+ * the dead-band is held exactly at the previous value; larger movement keeps
+ * a faster response.
+ */
+function stableLerp(
+  previous: number,
+  next: number,
+  baseAlpha: number,
+  deadBand: number,
+  fastThreshold: number,
+): number {
+  const delta = next - previous
+  const magnitude = Math.abs(delta)
+  if (magnitude <= deadBand) return previous
+
+  const target = next - Math.sign(delta) * deadBand
+  const response = magnitude >= fastThreshold
+    ? Math.max(baseAlpha, 0.45)
+    : Math.min(baseAlpha, 0.18)
+  return lerp(previous, target, response)
+}
+
+/**
+ * Schmitt-trigger style hysteresis for the jaw. Noise must cross a clear
+ * activation threshold before the mouth starts moving, while a lower release
+ * threshold lets real speech close cleanly between syllables.
+ */
+function stabilizeJaw(previous: number, candidate: number): number {
+  const activationThreshold = 0.2
+  const releaseThreshold = 0.075
+
+  if (previous <= 0.04 && candidate < activationThreshold) return 0
+  if (previous > 0.04 && candidate < releaseThreshold) return 0
+  if (Math.abs(candidate - previous) < 0.035) return previous
+
+  return lerp(previous, candidate, candidate > previous ? 0.72 : 0.62)
+}
+
+/**
+ * Blinks are deliberately decisive: weak eyelid noise is ignored, while a
+ * genuine closure crosses the higher activation threshold and then releases
+ * quickly. This avoids constant eye flutter on low-light mobile cameras.
+ */
+function stabilizeBlink(previous: number, candidate: number): number {
+  const activationThreshold = 0.52
+  const releaseThreshold = 0.16
+
+  if (previous <= 0.08 && candidate < activationThreshold) return 0
+  if (previous > 0.08 && candidate < releaseThreshold) return 0
+  if (Math.abs(candidate - previous) < 0.07) return previous
+
+  return lerp(previous, candidate, candidate > previous ? 0.88 : 0.72)
+}
+
+function stabilizeSoftExpression(previous: number, candidate: number): number {
+  if (candidate < 0.12 && previous < 0.12) return 0
+  if (Math.abs(candidate - previous) < 0.045) return previous
+  return lerp(previous, candidate, 0.32)
+}
+
 export function estimateStaticDragonPose(
   result: FaceLandmarkerResult | null,
 ): StaticDragonPoseEstimate {
@@ -167,26 +229,35 @@ export function smoothStaticDragonPose(
 ): StaticDragonPoseEstimate {
   if (!next.visible || !previous?.visible) return next
   const amount = clamp(alpha, 0, 1)
-  const expression = smoothDragonExpression(previous, next, 0.4)
+  const rawExpression = smoothDragonExpression(previous, next, 0.34)
+  const expression: DragonExpressionState = {
+    jawOpen: stabilizeJaw(previous.jawOpen, rawExpression.jawOpen),
+    blinkLeft: stabilizeBlink(previous.blinkLeft, rawExpression.blinkLeft),
+    blinkRight: stabilizeBlink(previous.blinkRight, rawExpression.blinkRight),
+    gazeX: stableLerp(previous.gazeX, rawExpression.gazeX, 0.25, 0.035, 0.18),
+    gazeY: stableLerp(previous.gazeY, rawExpression.gazeY, 0.25, 0.035, 0.18),
+    smile: stabilizeSoftExpression(previous.smile, rawExpression.smile),
+    browRaise: stabilizeSoftExpression(previous.browRaise, rawExpression.browRaise),
+  }
 
   return {
     visible: true,
-    centerX: lerp(previous.centerX, next.centerX, amount),
-    centerY: lerp(previous.centerY, next.centerY, amount),
-    eyeCenterX: lerp(previous.eyeCenterX, next.eyeCenterX, amount),
-    eyeCenterY: lerp(previous.eyeCenterY, next.eyeCenterY, amount),
-    eyeDistance: lerp(previous.eyeDistance, next.eyeDistance, amount),
-    faceWidth: lerp(previous.faceWidth, next.faceWidth, amount),
-    faceHeight: lerp(previous.faceHeight, next.faceHeight, amount),
-    foreheadX: lerp(previous.foreheadX, next.foreheadX, amount),
-    foreheadY: lerp(previous.foreheadY, next.foreheadY, amount),
-    chinX: lerp(previous.chinX, next.chinX, amount),
-    chinY: lerp(previous.chinY, next.chinY, amount),
-    neckAnchorX: lerp(previous.neckAnchorX, next.neckAnchorX, amount),
-    neckAnchorY: lerp(previous.neckAnchorY, next.neckAnchorY, amount),
-    roll: lerp(previous.roll, next.roll, amount),
-    yaw: lerp(previous.yaw, next.yaw, amount),
-    pitch: lerp(previous.pitch, next.pitch, amount),
+    centerX: stableLerp(previous.centerX, next.centerX, amount, 0.0018, 0.018),
+    centerY: stableLerp(previous.centerY, next.centerY, amount, 0.0018, 0.018),
+    eyeCenterX: stableLerp(previous.eyeCenterX, next.eyeCenterX, amount, 0.0018, 0.018),
+    eyeCenterY: stableLerp(previous.eyeCenterY, next.eyeCenterY, amount, 0.0018, 0.018),
+    eyeDistance: stableLerp(previous.eyeDistance, next.eyeDistance, amount, 0.0015, 0.015),
+    faceWidth: stableLerp(previous.faceWidth, next.faceWidth, amount, 0.0025, 0.022),
+    faceHeight: stableLerp(previous.faceHeight, next.faceHeight, amount, 0.0025, 0.022),
+    foreheadX: stableLerp(previous.foreheadX, next.foreheadX, amount, 0.002, 0.02),
+    foreheadY: stableLerp(previous.foreheadY, next.foreheadY, amount, 0.002, 0.02),
+    chinX: stableLerp(previous.chinX, next.chinX, amount, 0.002, 0.02),
+    chinY: stableLerp(previous.chinY, next.chinY, amount, 0.002, 0.02),
+    neckAnchorX: stableLerp(previous.neckAnchorX, next.neckAnchorX, amount, 0.0022, 0.022),
+    neckAnchorY: stableLerp(previous.neckAnchorY, next.neckAnchorY, amount, 0.0022, 0.022),
+    roll: stableLerp(previous.roll, next.roll, amount, 0.012, 0.085),
+    yaw: stableLerp(previous.yaw, next.yaw, amount, 0.015, 0.1),
+    pitch: stableLerp(previous.pitch, next.pitch, amount, 0.015, 0.1),
     ...expression,
   }
 }
