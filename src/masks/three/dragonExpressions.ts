@@ -160,14 +160,14 @@ export function estimateDragonExpression(
 }
 
 function stableJawTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.11) return 0
-  if (previous >= 0.035 && candidate < 0.045) return 0
+  if (previous < 0.035 && candidate < 0.18) return 0
+  if (previous >= 0.035 && candidate < 0.055) return 0
   return candidate
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.06 && candidate < 0.2) return 0
-  if (previous >= 0.06 && candidate < 0.08) return 0
+  if (previous < 0.06 && candidate < 0.45) return 0
+  if (previous >= 0.06 && candidate < 0.1) return 0
   return candidate
 }
 
