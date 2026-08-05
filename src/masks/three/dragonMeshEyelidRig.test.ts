@@ -45,9 +45,10 @@ function riggedHead() {
 }
 
 describe('dragon GLB v4 native eyelids', () => {
-  it('rejects neutral noise and reaches one complete morph influence', () => {
-    expect(resolveNativeDragonBlinkInfluence(0.03)).toBe(0)
-    expect(resolveNativeDragonBlinkInfluence(0.5)).toBeGreaterThan(0.35)
+  it('rejects neutral noise and makes ordinary blinks clearly visible', () => {
+    expect(resolveNativeDragonBlinkInfluence(0.02)).toBe(0)
+    expect(resolveNativeDragonBlinkInfluence(0.18)).toBeGreaterThan(0.25)
+    expect(resolveNativeDragonBlinkInfluence(0.5)).toBeGreaterThan(0.7)
     expect(resolveNativeDragonBlinkInfluence(1)).toBeCloseTo(1)
   })
 
@@ -83,7 +84,7 @@ describe('dragon GLB v4 native eyelids', () => {
 
     expect(mesh.morphTargetInfluences?.[0]).toBe(0.37)
     expect(mesh.morphTargetInfluences?.[1]).toBeCloseTo(1)
-    expect(mesh.morphTargetInfluences?.[2]).toBeGreaterThan(0.35)
+    expect(mesh.morphTargetInfluences?.[2]).toBeGreaterThan(0.7)
     expect(mesh.morphTargetInfluences?.[2]).toBeLessThan(1)
   })
 
