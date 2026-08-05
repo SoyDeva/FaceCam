@@ -39,10 +39,10 @@ function resolveMorphIndex(
 }
 
 /**
- * The v4 GLB stores complete eye closure at morph influence 1. The incoming
- * expression already contains noise rejection, so this final response curve
- * prioritizes a clearly visible closure instead of leaving natural blinks at
- * an imperceptible fraction of the authored morph travel.
+ * The v5 GLB stores complete anatomical eye closure at morph influence 1.
+ * The incoming expression already contains noise rejection, so this final
+ * response curve prioritizes a clearly visible closure instead of leaving
+ * natural blinks at an imperceptible fraction of the authored morph travel.
  */
 export function resolveNativeDragonBlinkInfluence(blink: number): number {
   const safeBlink = clamp(blink)
