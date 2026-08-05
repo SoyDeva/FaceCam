@@ -45,31 +45,31 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v6 installer bundle
+      - name: Verify GLB v7 installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v5.glb'
-          corrected='El modelo guardado no activó el rig facial del Dragón Blanco v6.'
-          model='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v6.glb'
-          fingerprint='73804176aa861c52d2a61bc0d31a9ea4dcc45365197ac86bf861233040a19a96'
+          obsolete='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v6.glb'
+          corrected='El modelo guardado no activó el rig facial del Dragón Blanco v7.'
+          model='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v7.glb'
+          fingerprint='7ee6ef7403768012f97c8370c480ea3b7a5e1e96fe92ad61d9e277c481ea9e5e'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v5 incorrecto."
+            echo "::error::El paquete todavía solicita el GLB v6 con la línea ocular incorrecta."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación facial v6."
+            echo "::error::El paquete no contiene la validación facial v7."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB v6 oficial."
+            echo "::error::El paquete no solicita el GLB v7 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v6."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v7."
             exit 1
           fi
 

@@ -98,9 +98,10 @@ function normalizedClosure(
 }
 
 /**
- * MediaPipe's eyeBlink channels support the signal, but some devices report
- * them weakly or not at all. The geometric eyelid opening therefore provides
- * an independent live path that works before and during guided calibration.
+ * MediaPipe's eyeBlink channels provide an immediate fallback before the
+ * guided per-eye calibration exists. Once calibration is available, its own
+ * neutral baseline must take priority so a naturally smaller eye cannot stay
+ * permanently half closed.
  */
 function directBlinkEvidence(rawBlink: number): number {
   if (!Number.isFinite(rawBlink) || rawBlink <= 0.08) return 0
@@ -109,9 +110,14 @@ function directBlinkEvidence(rawBlink: number): number {
   return clamp(Math.pow(activated, 0.52))
 }
 
+/**
+ * Absolute geometry is used only before calibration and only for an obvious
+ * closure. The former 0.145 open threshold classified ordinary asymmetric
+ * open eyes as partially closed.
+ */
 function directGeometryBlinkEvidence(opening: number): number {
   if (!Number.isFinite(opening)) return 0
-  const closure = 1 - smoothstep(0.06, 0.145, opening)
+  const closure = 1 - smoothstep(0.045, 0.095, opening)
   if (closure < 0.04) return 0
   return clamp(Math.pow(closure, 0.72))
 }
@@ -122,36 +128,38 @@ export function estimateDragonExpression(
 ): DragonExpressionState {
   const scores = blendshapeMap(result)
   const metrics = extractDragonExpressionMetrics(result)
-  const directLeftBlink = Math.max(
-    directBlinkEvidence(score(scores, 'eyeBlinkLeft')),
-    metrics ? directGeometryBlinkEvidence(metrics.leftEyeOpening) : 0,
-  )
-  const directRightBlink = Math.max(
-    directBlinkEvidence(score(scores, 'eyeBlinkRight')),
-    metrics ? directGeometryBlinkEvidence(metrics.rightEyeOpening) : 0,
-  )
+  const rawLeftBlink = directBlinkEvidence(score(scores, 'eyeBlinkLeft'))
+  const rawRightBlink = directBlinkEvidence(score(scores, 'eyeBlinkRight'))
 
   if (!metrics) {
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
-      blinkLeft: directLeftBlink,
-      blinkRight: directRightBlink,
+      blinkLeft: calibration ? 0 : rawLeftBlink,
+      blinkRight: calibration ? 0 : rawRightBlink,
     }
   }
 
-  // Eyes respond immediately after face detection. Mouth articulation remains
-  // calibrated because its neutral range varies much more by user.
+  // Before calibration, accept only decisive geometry or the direct
+  // MediaPipe channel. Mouth articulation remains neutral until its personal
+  // range has been measured.
   if (!calibration) {
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
-      blinkLeft: directLeftBlink,
-      blinkRight: directRightBlink,
+      blinkLeft: Math.max(
+        rawLeftBlink,
+        directGeometryBlinkEvidence(metrics.leftEyeOpening),
+      ),
+      blinkRight: Math.max(
+        rawRightBlink,
+        directGeometryBlinkEvidence(metrics.rightEyeOpening),
+      ),
     }
   }
 
   // Lip separation is the articulation clock. MediaPipe's jawOpen channel can
   // remain elevated across a whole sentence, so it only supports the vertical
-  // lip signal instead of taking control through a max().
+  // lip signal instead of taking control through a max(). This is the approved
+  // mouth architecture from PR #26.
   const lipEvidence = normalizeLinearRange(
     metrics.mouthHeight,
     calibration.mouthHeightNeutral,
@@ -171,17 +179,23 @@ export function estimateDragonExpression(
     0.006,
     calibration.mouthHeightSpeech - calibration.mouthHeightNeutral,
   )
-  const jawRange = Math.max(0.02, calibration.jawSpeech - calibration.jawNeutral)
-  const neutralLock = metrics.mouthHeight
-      <= calibration.mouthHeightNeutral + Math.max(0.0018, heightRange * 0.065)
-    && metrics.jawOpen
-      <= calibration.jawNeutral + Math.max(0.012, jawRange * 0.075)
+  const closedLipLimit = Math.max(
+    0.026,
+    calibration.mouthHeightNeutral + Math.max(0.0024, heightRange * 0.1),
+  )
   const mouthClose = score(scores, 'mouthClose')
+
+  // Closed lips always win over a noisy jawOpen blendshape. This prevents the
+  // mouth from talking by itself after an imperfect recalibration.
+  const neutralLock = metrics.mouthHeight <= closedLipLimit || mouthClose >= 0.58
   const articulatedJaw = Math.pow(rawJaw, 0.9) * 0.82
-  const jawOpen = neutralLock || rawJaw < 0.07
+  const jawOpen = neutralLock || rawJaw < 0.1
     ? 0
     : clamp(articulatedJaw - (rawJaw < 0.3 ? mouthClose * 0.12 : 0))
 
+  // Each calibrated eye uses only its own open/closed range and blendshape
+  // baseline. Absolute fallbacks are deliberately excluded here to avoid the
+  // left/right neutral bias observed with the v6 release.
   const leftBlinkGeometry = normalizedClosure(
     metrics.leftEyeOpening,
     calibration.leftEyeOpen,
@@ -196,19 +210,19 @@ export function estimateDragonExpression(
     metrics.leftBlink,
     calibration.leftBlinkOpen,
     calibration.leftBlinkClosed,
-    0.82,
+    0.5,
     0.1,
   )
   const rightBlinkScore = normalizeCompressedRange(
     metrics.rightBlink,
     calibration.rightBlinkOpen,
     calibration.rightBlinkClosed,
-    0.82,
+    0.5,
     0.1,
   )
 
-  const blinkLeft = Math.max(leftBlinkGeometry, leftBlinkScore, directLeftBlink)
-  const blinkRight = Math.max(rightBlinkGeometry, rightBlinkScore, directRightBlink)
+  const blinkLeft = Math.max(leftBlinkGeometry, leftBlinkScore)
+  const blinkRight = Math.max(rightBlinkGeometry, rightBlinkScore)
 
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
