@@ -1,0 +1,10 @@
+{
+  "masks": [
+    {
+      "id": "white-dragon",
+      "name": "Dragón Blanco",
+      "version": "0.1.0-prototype",
+      "manifest": "white-dragon/manifest.json"
+    }
+  ]
+}
