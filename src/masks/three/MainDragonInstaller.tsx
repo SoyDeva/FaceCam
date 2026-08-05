@@ -3,13 +3,14 @@ import { runtimeConfig } from '../../config/runtime'
 import { StaticDragonRenderer } from './StaticDragonRenderer'
 import {
   loadLocalDragonModel,
+  removeLocalDragonExpressionCalibration,
   removeLocalDragonHeadCalibration,
   removeLocalDragonModel,
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v1.glb'
-const OFFICIAL_MODEL_SHA256 = '7383927f4cde931fd6f8153f69cce8d578483e7a80bff9ecbd5920725d34d117'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v2.glb'
+const OFFICIAL_MODEL_SHA256 = '01a9a1fb16f93284e426cdbc0afa2487ddf19e2804ec196d600e347d5766c6a0'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -47,11 +48,16 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco riggeado correcto de FaceCam.',
+      'El archivo no corresponde al Dragón Blanco riggeado v2 de FaceCam.',
     )
   }
 
   await validateNativeRig(blob)
+}
+
+function clearModelCalibrations(): void {
+  removeLocalDragonHeadCalibration()
+  removeLocalDragonExpressionCalibration()
 }
 
 export function MainDragonInstaller() {
@@ -69,29 +75,29 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón riggeado correcto directamente en FaceCam principal.')
+          setMessage('Instala el dragón v2 con mandíbula neutral y parpadeos reparados.')
           return
         }
 
-        setMessage('Verificando la identidad, mandíbula y párpados del modelo guardado…')
+        setMessage('Verificando la versión reparada de mandíbula y párpados…')
 
         try {
           await validateOfficialRig(stored.blob)
         } catch (validationError) {
           await removeLocalDragonModel()
-          removeLocalDragonHeadCalibration()
+          clearModelCalibrations()
           if (cancelled) return
 
           setState('needed')
           setMessage(
-            'Se detectó y eliminó una máscara distinta a la versión oficial. Selecciona ahora el archivo correcto.',
+            'FaceCam retiró el GLB v1 porque sus párpados deformaban el hocico. Selecciona el archivo v2 reparado.',
           )
 
           // CameraStudio may have started reading the old IndexedDB record in
           // parallel. A single reload guarantees that the incompatible GLB is
           // no longer visible before the replacement is installed.
           window.setTimeout(() => window.location.reload(), 450)
-          console.warn('FaceCam retiró un GLB no oficial o incompatible.', validationError)
+          console.warn('FaceCam retiró un GLB anterior o incompatible.', validationError)
           return
         }
 
@@ -99,7 +105,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita reinstalar el dragón riggeado en este navegador.')
+        setMessage('FaceCam necesita instalar el dragón riggeado v2 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -121,18 +127,18 @@ export function MainDragonInstaller() {
 
     await validateOfficialRig(file)
     await saveLocalDragonModel(file, OFFICIAL_MODEL_NAME)
-    removeLocalDragonHeadCalibration()
+    clearModelCalibrations()
   }
 
   async function handleSelection(file: File | undefined): Promise<void> {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando identidad, mandíbula, párpados, materiales y geometría del GLB…')
+    setMessage('Verificando identidad, mandíbula neutral y parpadeos del GLB v2…')
 
     try {
       await install(file)
-      setMessage('Dragón correcto instalado. Reiniciando FaceCam principal…')
+      setMessage('Dragón v2 instalado. Reiniciando FaceCam principal…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -167,7 +173,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco riggeado correcto
+        Dragón Blanco riggeado v2
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -189,7 +195,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón correcto'}
+            : 'Seleccionar dragón v2'}
       </button>
     </aside>
   )
