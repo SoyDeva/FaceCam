@@ -47,6 +47,53 @@ const LANDMARK = {
   rightEyeLowerC: 373,
 } as const
 
+interface MouthMetrics {
+  heightRatio: number
+  widthRatio: number
+}
+
+interface EyeMetrics {
+  openingRatio: number
+}
+
+interface AdaptiveExpressionCalibration {
+  uniqueFrames: number
+  missingFrames: number
+  jawBaseline: number
+  mouthHeightBaseline: number
+  mouthWidthBaseline: number
+  leftEyeOpenBaseline: number
+  rightEyeOpenBaseline: number
+  leftBlinkBaseline: number
+  rightBlinkBaseline: number
+  lastResult: FaceLandmarkerResult | null
+  lastExpression: DragonExpressionState
+}
+
+const BOOTSTRAP_FRAMES = 12
+
+function createAdaptiveCalibration(): AdaptiveExpressionCalibration {
+  return {
+    uniqueFrames: 0,
+    missingFrames: 0,
+    jawBaseline: 0,
+    mouthHeightBaseline: 0,
+    mouthWidthBaseline: 0,
+    leftEyeOpenBaseline: 0.14,
+    rightEyeOpenBaseline: 0.14,
+    leftBlinkBaseline: 0,
+    rightBlinkBaseline: 0,
+    lastResult: null,
+    lastExpression: { ...NEUTRAL_DRAGON_EXPRESSION },
+  }
+}
+
+let adaptiveCalibration = createAdaptiveCalibration()
+
+export function resetAdaptiveExpressionCalibration(): void {
+  adaptiveCalibration = createAdaptiveCalibration()
+}
+
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -73,20 +120,14 @@ function score(scores: Map<string, number>, name: string): number {
   return clamp(scores.get(name) ?? 0)
 }
 
-/**
- * Expands the low end of a MediaPipe score. Mobile cameras often report jaw
- * values below 0.08 during normal speech, even though the lips are visibly
- * articulating. This response keeps a small neutral zone but makes the useful
- * conversational range occupy most of the dragon morph.
- */
 function compressedResponse(value: number, deadZone: number, strength: number): number {
   const active = Math.max(0, value - deadZone)
   return clamp(1 - Math.exp(-active * strength))
 }
 
-function mouthLandmarkSignal(result: FaceLandmarkerResult | null): number {
+function mouthMetrics(result: FaceLandmarkerResult | null): MouthMetrics | null {
   const landmarks = result?.faceLandmarks[0]
-  if (!landmarks) return 0
+  if (!landmarks) return null
 
   const upperInner = landmarks[LANDMARK.upperLipInner]
   const lowerInner = landmarks[LANDMARK.lowerLipInner]
@@ -105,33 +146,28 @@ function mouthLandmarkSignal(result: FaceLandmarkerResult | null): number {
     || !chin
     || !mouthLeft
     || !mouthRight
-  ) return 0
+  ) return null
 
   const faceHeight = distance2d(forehead, chin)
   const mouthWidth = distance2d(mouthLeft, mouthRight)
-  if (faceHeight < 0.08 || mouthWidth < 0.025) return 0
+  if (faceHeight < 0.08 || mouthWidth < 0.025) return null
 
   const innerGap = distance2d(upperInner, lowerInner)
   const outerGap = distance2d(upperOuter, lowerOuter)
   const gap = Math.max(innerGap, outerGap * 0.76)
-  const heightRatio = gap / faceHeight
-  const widthRatio = gap / mouthWidth
 
-  // The thresholds deliberately cover subtle lip separation. The tiny lower
-  // edge suppresses camera noise, while the short upper range makes ordinary
-  // syllables visibly drive the jaw without requiring an exaggerated opening.
-  const heightSignal = smoothstep(0.0009, 0.033, heightRatio)
-  const widthSignal = smoothstep(0.003, 0.13, widthRatio)
-  const combined = clamp(heightSignal * 0.82 + widthSignal * 0.18)
-  return Math.pow(combined, 0.54)
+  return {
+    heightRatio: gap / faceHeight,
+    widthRatio: gap / mouthWidth,
+  }
 }
 
-function eyeLandmarkBlink(
+function eyeMetrics(
   result: FaceLandmarkerResult | null,
   indices: readonly [number, number, number, number, number, number, number, number],
-): number {
+): EyeMetrics | null {
   const landmarks = result?.faceLandmarks[0]
-  if (!landmarks) return 0
+  if (!landmarks) return null
 
   const [
     outerIndex,
@@ -152,29 +188,43 @@ function eyeLandmarkBlink(
   const upperC = landmarks[upperCIndex]
   const lowerC = landmarks[lowerCIndex]
   if (!outer || !inner || !upperA || !lowerA || !upperB || !lowerB || !upperC || !lowerC) {
-    return 0
+    return null
   }
 
   const width = distance2d(outer, inner)
-  if (width < 0.012) return 0
+  if (width < 0.012) return null
 
-  const opening = (
-    distance2d(upperA, lowerA)
-    + distance2d(upperB, lowerB)
-    + distance2d(upperC, lowerC)
-  ) / (3 * width)
-
-  const closure = 1 - smoothstep(0.072, 0.185, opening)
-  return clamp(Math.pow(closure, 1.28))
+  return {
+    openingRatio: (
+      distance2d(upperA, lowerA)
+      + distance2d(upperB, lowerB)
+      + distance2d(upperC, lowerC)
+    ) / (3 * width),
+  }
 }
 
-export function estimateDragonExpression(
-  result: FaceLandmarkerResult | null,
-): DragonExpressionState {
-  const scores = blendshapeMap(result)
-  const landmarksAvailable = Boolean(result?.faceLandmarks[0])
-  if (!scores.size && !landmarksAvailable) return { ...NEUTRAL_DRAGON_EXPRESSION }
+function trackFloor(current: number, value: number, initialized: boolean): number {
+  if (!initialized) return value
+  const alpha = value < current ? 0.22 : 0.0008
+  return lerp(current, value, alpha)
+}
 
+function trackCeiling(current: number, value: number, initialized: boolean): number {
+  if (!initialized) return value
+  const alpha = value > current ? 0.18 : 0.0008
+  return lerp(current, value, alpha)
+}
+
+function relativeBlink(opening: number | undefined, openBaseline: number): number {
+  if (opening === undefined || openBaseline < 0.04) return 0
+  const closureFraction = 1 - opening / openBaseline
+  return smoothstep(0.12, 0.62, closureFraction)
+}
+
+function estimateStateless(
+  result: FaceLandmarkerResult,
+  scores: Map<string, number>,
+): DragonExpressionState {
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
   const lookInRight = score(scores, 'eyeLookInRight')
@@ -183,7 +233,10 @@ export function estimateDragonExpression(
   const lookUp = (score(scores, 'eyeLookUpLeft') + score(scores, 'eyeLookUpRight')) / 2
 
   const jawBlendshape = compressedResponse(score(scores, 'jawOpen'), 0.001, 13.5)
-  const mouthGeometry = mouthLandmarkSignal(result)
+  const mouth = mouthMetrics(result)
+  const heightSignal = mouth ? smoothstep(0.0009, 0.033, mouth.heightRatio) : 0
+  const widthSignal = mouth ? smoothstep(0.003, 0.13, mouth.widthRatio) : 0
+  const mouthGeometry = Math.pow(clamp(heightSignal * 0.82 + widthSignal * 0.18), 0.54)
   const lipArticulation = Math.max(
     score(scores, 'mouthFunnel'),
     score(scores, 'mouthPucker'),
@@ -195,7 +248,7 @@ export function estimateDragonExpression(
     : Math.pow(clamp((rawJawSignal - 0.012) / 0.988), 0.6)
   const closeSuppression = shapedJawSignal < 0.28 ? mouthClose * 0.26 : 0
 
-  const leftBlinkGeometry = eyeLandmarkBlink(result, [
+  const leftEye = eyeMetrics(result, [
     LANDMARK.leftEyeOuter,
     LANDMARK.leftEyeInner,
     LANDMARK.leftEyeUpperA,
@@ -205,7 +258,7 @@ export function estimateDragonExpression(
     LANDMARK.leftEyeUpperC,
     LANDMARK.leftEyeLowerC,
   ])
-  const rightBlinkGeometry = eyeLandmarkBlink(result, [
+  const rightEye = eyeMetrics(result, [
     LANDMARK.rightEyeOuter,
     LANDMARK.rightEyeInner,
     LANDMARK.rightEyeUpperA,
@@ -215,7 +268,12 @@ export function estimateDragonExpression(
     LANDMARK.rightEyeUpperC,
     LANDMARK.rightEyeLowerC,
   ])
-
+  const leftBlinkGeometry = leftEye
+    ? clamp(Math.pow(1 - smoothstep(0.072, 0.185, leftEye.openingRatio), 1.28))
+    : 0
+  const rightBlinkGeometry = rightEye
+    ? clamp(Math.pow(1 - smoothstep(0.072, 0.185, rightEye.openingRatio), 1.28))
+    : 0
   const leftBlinkBlendshape = compressedResponse(score(scores, 'eyeBlinkLeft'), 0.008, 7.2)
   const rightBlinkBlendshape = compressedResponse(score(scores, 'eyeBlinkRight'), 0.008, 7.2)
 
@@ -246,22 +304,223 @@ export function estimateDragonExpression(
   }
 }
 
+export function estimateDragonExpression(
+  result: FaceLandmarkerResult | null,
+): DragonExpressionState {
+  if (!result) {
+    adaptiveCalibration.missingFrames += 1
+    if (adaptiveCalibration.missingFrames > 90) resetAdaptiveExpressionCalibration()
+    return { ...NEUTRAL_DRAGON_EXPRESSION }
+  }
+
+  if (result === adaptiveCalibration.lastResult) {
+    return { ...adaptiveCalibration.lastExpression }
+  }
+  adaptiveCalibration.lastResult = result
+
+  const scores = blendshapeMap(result)
+  const landmarksAvailable = Boolean(result.faceLandmarks[0])
+  if (!scores.size && !landmarksAvailable) {
+    adaptiveCalibration.missingFrames += 1
+    if (adaptiveCalibration.missingFrames > 30) resetAdaptiveExpressionCalibration()
+    return { ...NEUTRAL_DRAGON_EXPRESSION }
+  }
+  adaptiveCalibration.missingFrames = 0
+
+  // Blendshape-only data is uncommon in production but useful in tests and as
+  // a fallback when a browser omits landmarks. It cannot be calibrated
+  // geometrically, so preserve the deterministic stateless response.
+  if (!landmarksAvailable) {
+    const expression = estimateStateless(result, scores)
+    adaptiveCalibration.lastExpression = expression
+    return { ...expression }
+  }
+
+  const mouth = mouthMetrics(result)
+  const leftEye = eyeMetrics(result, [
+    LANDMARK.leftEyeOuter,
+    LANDMARK.leftEyeInner,
+    LANDMARK.leftEyeUpperA,
+    LANDMARK.leftEyeLowerA,
+    LANDMARK.leftEyeUpperB,
+    LANDMARK.leftEyeLowerB,
+    LANDMARK.leftEyeUpperC,
+    LANDMARK.leftEyeLowerC,
+  ])
+  const rightEye = eyeMetrics(result, [
+    LANDMARK.rightEyeOuter,
+    LANDMARK.rightEyeInner,
+    LANDMARK.rightEyeUpperA,
+    LANDMARK.rightEyeLowerA,
+    LANDMARK.rightEyeUpperB,
+    LANDMARK.rightEyeLowerB,
+    LANDMARK.rightEyeUpperC,
+    LANDMARK.rightEyeLowerC,
+  ])
+
+  const rawJaw = score(scores, 'jawOpen')
+  const rawLeftBlink = score(scores, 'eyeBlinkLeft')
+  const rawRightBlink = score(scores, 'eyeBlinkRight')
+  const initialized = adaptiveCalibration.uniqueFrames > 0
+
+  adaptiveCalibration.jawBaseline = trackFloor(
+    adaptiveCalibration.jawBaseline,
+    rawJaw,
+    initialized,
+  )
+  if (mouth) {
+    adaptiveCalibration.mouthHeightBaseline = trackFloor(
+      adaptiveCalibration.mouthHeightBaseline,
+      mouth.heightRatio,
+      initialized,
+    )
+    adaptiveCalibration.mouthWidthBaseline = trackFloor(
+      adaptiveCalibration.mouthWidthBaseline,
+      mouth.widthRatio,
+      initialized,
+    )
+  }
+  if (leftEye) {
+    adaptiveCalibration.leftEyeOpenBaseline = trackCeiling(
+      adaptiveCalibration.leftEyeOpenBaseline,
+      leftEye.openingRatio,
+      initialized,
+    )
+  }
+  if (rightEye) {
+    adaptiveCalibration.rightEyeOpenBaseline = trackCeiling(
+      adaptiveCalibration.rightEyeOpenBaseline,
+      rightEye.openingRatio,
+      initialized,
+    )
+  }
+  adaptiveCalibration.leftBlinkBaseline = trackFloor(
+    adaptiveCalibration.leftBlinkBaseline,
+    rawLeftBlink,
+    initialized,
+  )
+  adaptiveCalibration.rightBlinkBaseline = trackFloor(
+    adaptiveCalibration.rightBlinkBaseline,
+    rawRightBlink,
+    initialized,
+  )
+  adaptiveCalibration.uniqueFrames += 1
+
+  const lookOutLeft = score(scores, 'eyeLookOutLeft')
+  const lookInLeft = score(scores, 'eyeLookInLeft')
+  const lookInRight = score(scores, 'eyeLookInRight')
+  const lookOutRight = score(scores, 'eyeLookOutRight')
+  const lookDown = (score(scores, 'eyeLookDownLeft') + score(scores, 'eyeLookDownRight')) / 2
+  const lookUp = (score(scores, 'eyeLookUpLeft') + score(scores, 'eyeLookUpRight')) / 2
+
+  if (adaptiveCalibration.uniqueFrames <= BOOTSTRAP_FRAMES) {
+    const neutral = {
+      ...NEUTRAL_DRAGON_EXPRESSION,
+      gazeX: clamp(
+        ((lookOutLeft - lookInLeft) + (lookInRight - lookOutRight)) / 2,
+        -1,
+        1,
+      ),
+      gazeY: clamp(lookDown - lookUp, -1, 1),
+    }
+    adaptiveCalibration.lastExpression = neutral
+    return { ...neutral }
+  }
+
+  const jawBlendshape = compressedResponse(
+    rawJaw - adaptiveCalibration.jawBaseline,
+    0.0015,
+    18,
+  )
+  const mouthHeight = mouth
+    ? smoothstep(
+        adaptiveCalibration.mouthHeightBaseline + 0.0012,
+        adaptiveCalibration.mouthHeightBaseline + 0.038,
+        mouth.heightRatio,
+      )
+    : 0
+  const mouthWidth = mouth
+    ? smoothstep(
+        adaptiveCalibration.mouthWidthBaseline + 0.004,
+        adaptiveCalibration.mouthWidthBaseline + 0.145,
+        mouth.widthRatio,
+      )
+    : 0
+  const mouthGeometry = Math.pow(clamp(mouthHeight * 0.84 + mouthWidth * 0.16), 0.62)
+  const lipArticulation = compressedResponse(
+    Math.max(score(scores, 'mouthFunnel'), score(scores, 'mouthPucker')),
+    0.025,
+    3.2,
+  ) * 0.28
+  const mouthClose = score(scores, 'mouthClose')
+  const jawSignal = Math.max(jawBlendshape, mouthGeometry, lipArticulation)
+  const closeSuppression = jawSignal < 0.22 ? mouthClose * 0.18 : 0
+
+  const leftBlinkBlendshape = compressedResponse(
+    rawLeftBlink - adaptiveCalibration.leftBlinkBaseline,
+    0.006,
+    10.5,
+  )
+  const rightBlinkBlendshape = compressedResponse(
+    rawRightBlink - adaptiveCalibration.rightBlinkBaseline,
+    0.006,
+    10.5,
+  )
+  const leftBlinkGeometry = relativeBlink(
+    leftEye?.openingRatio,
+    adaptiveCalibration.leftEyeOpenBaseline,
+  )
+  const rightBlinkGeometry = relativeBlink(
+    rightEye?.openingRatio,
+    adaptiveCalibration.rightEyeOpenBaseline,
+  )
+
+  const expression: DragonExpressionState = {
+    jawOpen: clamp((jawSignal - closeSuppression) * 1.12),
+    blinkLeft: clamp(Math.max(leftBlinkBlendshape, leftBlinkGeometry)),
+    blinkRight: clamp(Math.max(rightBlinkBlendshape, rightBlinkGeometry)),
+    gazeX: clamp(
+      ((lookOutLeft - lookInLeft) + (lookInRight - lookOutRight)) / 2,
+      -1,
+      1,
+    ),
+    gazeY: clamp(lookDown - lookUp, -1, 1),
+    smile: smoothstep(
+      0.04,
+      0.75,
+      (score(scores, 'mouthSmileLeft') + score(scores, 'mouthSmileRight')) / 2,
+    ),
+    browRaise: smoothstep(
+      0.04,
+      0.7,
+      (
+        score(scores, 'browInnerUp')
+        + score(scores, 'browOuterUpLeft')
+        + score(scores, 'browOuterUpRight')
+      ) / 3,
+    ),
+  }
+
+  adaptiveCalibration.lastExpression = expression
+  return { ...expression }
+}
+
 export function smoothDragonExpression(
   previous: DragonExpressionState,
   next: DragonExpressionState,
   alpha = 0.38,
 ): DragonExpressionState {
   const amount = clamp(alpha)
-  const jawTarget = next.jawOpen < 0.008 ? 0 : next.jawOpen
+  const jawTarget = next.jawOpen < 0.018 ? 0 : next.jawOpen
   const jawAlpha = jawTarget > previous.jawOpen
-    ? Math.max(amount, 0.94)
-    : Math.max(amount, 0.76)
+    ? Math.max(amount, 0.9)
+    : Math.max(amount, 0.78)
   const leftBlinkAlpha = next.blinkLeft > previous.blinkLeft
-    ? Math.max(amount, 0.96)
-    : Math.max(amount, 0.82)
+    ? Math.max(amount, 0.98)
+    : Math.max(amount, 0.86)
   const rightBlinkAlpha = next.blinkRight > previous.blinkRight
-    ? Math.max(amount, 0.96)
-    : Math.max(amount, 0.82)
+    ? Math.max(amount, 0.98)
+    : Math.max(amount, 0.86)
 
   return {
     jawOpen: lerp(previous.jawOpen, jawTarget, jawAlpha),
