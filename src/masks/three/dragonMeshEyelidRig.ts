@@ -3,7 +3,7 @@ import { Mesh, type Box3, type Object3D, type Vector3 } from 'three'
 const BLINK_DEAD_ZONE = 0.02
 const LEFT_BLINK_ALIASES = ['eyeBlinkLeft', 'blinkLeft'] as const
 const RIGHT_BLINK_ALIASES = ['eyeBlinkRight', 'blinkRight'] as const
-const V6_RIG_VERSION = '6.0.0'
+const SELF_TEST_RIG_VERSION = '7.0.0'
 
 /**
  * Each binding points only to morph-target influence slots authored inside
@@ -65,7 +65,7 @@ function resolveSelfTestInfluence(binding: DragonMeshEyelidBinding, now: number)
 }
 
 /**
- * The v6 GLB stores complete eye closure at morph influence 1. The incoming
+ * The v7 GLB stores complete eye closure at morph influence 1. The incoming
  * expression already contains noise rejection, so this final response curve
  * prioritizes a clearly visible closure instead of leaving natural blinks at
  * an imperceptible fraction of the authored morph travel.
@@ -103,12 +103,12 @@ export function createDragonMeshEyelidRig(
 
     const rigVersion = String(object.userData?.faceCamRigVersion ?? '')
     const meshName = normalizedMorphName(object.name)
-    const isV6Rig = rigVersion === V6_RIG_VERSION || meshName.includes('v6')
+    const isSelfTestRig = rigVersion === SELF_TEST_RIG_VERSION || meshName.includes('v7')
     bindings.push({
       influences,
       leftIndex,
       rightIndex,
-      selfTestEnabled: isV6Rig,
+      selfTestEnabled: isSelfTestRig,
       selfTestStartedAt: null,
     })
   })
