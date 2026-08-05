@@ -165,8 +165,21 @@ export function estimateDragonExpression(
     0.82,
     0.1,
   )
-  const blinkLeft = Math.pow(Math.max(leftBlinkGeometry, leftBlinkScore), 0.72)
-  const blinkRight = Math.pow(Math.max(rightBlinkGeometry, rightBlinkScore), 0.72)
+
+  // A fast natural blink is often shorter and weaker than the guided closed-eye
+  // calibration sample. Keep the calibrated channels, but add MediaPipe's raw
+  // eyeBlink signal as an independent rescue path so brief closures are not
+  // discarded and rendered as permanently static eyes.
+  const directLeftBlink = smoothstep(0.16, 0.68, score(scores, 'eyeBlinkLeft'))
+  const directRightBlink = smoothstep(0.16, 0.68, score(scores, 'eyeBlinkRight'))
+  const blinkLeft = Math.pow(
+    Math.max(leftBlinkGeometry, leftBlinkScore, directLeftBlink),
+    0.68,
+  )
+  const blinkRight = Math.pow(
+    Math.max(rightBlinkGeometry, rightBlinkScore, directRightBlink),
+    0.68,
+  )
 
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
@@ -177,8 +190,8 @@ export function estimateDragonExpression(
 
   return {
     jawOpen,
-    blinkLeft: blinkLeft < 0.075 ? 0 : clamp(blinkLeft),
-    blinkRight: blinkRight < 0.075 ? 0 : clamp(blinkRight),
+    blinkLeft: blinkLeft < 0.04 ? 0 : clamp(blinkLeft),
+    blinkRight: blinkRight < 0.04 ? 0 : clamp(blinkRight),
     gazeX: clamp(
       ((lookOutLeft - lookInLeft) + (lookInRight - lookOutRight)) / 2,
       -1,
@@ -209,8 +222,8 @@ function stableJawTarget(previous: number, candidate: number): number {
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.06 && candidate < 0.4) return 0
-  if (previous >= 0.06 && candidate < 0.08) return 0
+  if (previous < 0.04 && candidate < 0.12) return 0
+  if (previous >= 0.04 && candidate < 0.035) return 0
   return candidate
 }
 
@@ -226,8 +239,8 @@ export function smoothDragonExpression(
 
   return {
     jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.72 : 0.78),
-    blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.96 : 0.78),
-    blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.96 : 0.78),
+    blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.98 : 0.82),
+    blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.98 : 0.82),
     gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
     gazeY: lerp(previous.gazeY, next.gazeY, Math.min(amount, 0.22)),
     smile: lerp(previous.smile, next.smile, Math.min(amount, 0.24)),
