@@ -123,8 +123,8 @@ describe('blue dragon eye blink repair', () => {
     )
 
     const position = mesh.geometry.getAttribute('position') as Float32BufferAttribute
-    const left = mesh.geometry.morphAttributes.position[1] as Float32BufferAttribute
-    const right = mesh.geometry.morphAttributes.position[2] as Float32BufferAttribute
+    const left = mesh.geometry.morphAttributes.position![1] as Float32BufferAttribute
+    const right = mesh.geometry.morphAttributes.position![2] as Float32BufferAttribute
     const openSpan = position.getY(LEFT_UPPER) - position.getY(LEFT_LOWER)
     const closedSpan = Math.abs(
       closedY(position, left, LEFT_UPPER) - closedY(position, left, LEFT_LOWER),
@@ -154,8 +154,8 @@ describe('blue dragon eye blink repair', () => {
 
     applyDragonMeshEyelidRig(bindings, 1, 0.5)
 
-    const leftNormals = mesh.geometry.morphAttributes.normal[1] as Float32BufferAttribute
-    const rightNormals = mesh.geometry.morphAttributes.normal[2] as Float32BufferAttribute
+    const leftNormals = mesh.geometry.morphAttributes.normal![1] as Float32BufferAttribute
+    const rightNormals = mesh.geometry.morphAttributes.normal![2] as Float32BufferAttribute
     expect(Array.from(leftNormals.array).every((value) => value === 0)).toBe(true)
     expect(Array.from(rightNormals.array).every((value) => value === 0)).toBe(true)
     expect(mesh.morphTargetInfluences?.[0]).toBe(0.37)
