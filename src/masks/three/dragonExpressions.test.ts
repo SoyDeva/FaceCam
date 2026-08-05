@@ -129,11 +129,17 @@ describe('estimateDragonExpression', () => {
     expect(expression.blinkLeft).toBeGreaterThan(0.75)
     expect(expression.blinkRight).toBeGreaterThan(0.75)
   })
+
+  it('keeps a short natural blink visible even below the guided closed-eye score', () => {
+    const expression = estimateDragonExpression(resultFor(0.04, 0.012, 0.125, 0.25), calibration)
+    expect(expression.blinkLeft).toBeGreaterThan(0.15)
+    expect(expression.blinkRight).toBeGreaterThan(0.15)
+  })
 })
 
 describe('smoothDragonExpression', () => {
   it('rejects weak neutral jitter', () => {
-    const next = { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.08, blinkLeft: 0.15 }
+    const next = { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.08, blinkLeft: 0.08 }
     expect(smoothDragonExpression(NEUTRAL_DRAGON_EXPRESSION, next)).toEqual(NEUTRAL_DRAGON_EXPRESSION)
   })
 
@@ -148,5 +154,14 @@ describe('smoothDragonExpression', () => {
     )
     expect(open.jawOpen).toBeGreaterThan(0.45)
     expect(consonant.jawOpen).toBeLessThan(open.jawOpen * 0.25)
+  })
+
+  it('does not suppress a moderate natural blink', () => {
+    const blink = smoothDragonExpression(
+      NEUTRAL_DRAGON_EXPRESSION,
+      { ...NEUTRAL_DRAGON_EXPRESSION, blinkLeft: 0.18, blinkRight: 0.18 },
+    )
+    expect(blink.blinkLeft).toBeGreaterThan(0.17)
+    expect(blink.blinkRight).toBeGreaterThan(0.17)
   })
 })
