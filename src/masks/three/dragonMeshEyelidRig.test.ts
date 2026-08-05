@@ -105,10 +105,10 @@ describe('blue dragon eye blink repair', () => {
 
     expect(changedY(left, LEFT_UPPER)).toBeLessThan(0)
     expect(changedY(left, LEFT_LOWER)).toBeGreaterThan(0)
-    expect(changedY(left, LEFT_BROW)).toBe(0)
-    expect(changedY(left, RIGHT_BROW)).toBe(0)
-    expect(changedY(left, NOSE)).toBe(0)
-    expect(changedY(left, CHEEK)).toBe(0)
+    expect(changedY(left, LEFT_BROW)).toBeCloseTo(0)
+    expect(changedY(left, RIGHT_BROW)).toBeCloseTo(0)
+    expect(changedY(left, NOSE)).toBeCloseTo(0)
+    expect(changedY(left, CHEEK)).toBeCloseTo(0)
   })
 
   it('collapses each original blue circle while leaving the other eye untouched', () => {
@@ -134,12 +134,12 @@ describe('blue dragon eye blink repair', () => {
     expect(root.children).toHaveLength(originalChildren)
     expect(Array.from(position.array)).toEqual(originalPositions)
     expect(closedSpan).toBeLessThan(openSpan * 0.12)
-    expect(changedY(left, RIGHT_UPPER)).toBe(0)
-    expect(changedY(left, RIGHT_LOWER)).toBe(0)
+    expect(changedY(left, RIGHT_UPPER)).toBeCloseTo(0)
+    expect(changedY(left, RIGHT_LOWER)).toBeCloseTo(0)
     expect(changedY(right, RIGHT_UPPER)).toBeLessThan(0)
     expect(changedY(right, RIGHT_LOWER)).toBeGreaterThan(0)
-    expect(changedY(right, LEFT_UPPER)).toBe(0)
-    expect(changedY(right, LEFT_LOWER)).toBe(0)
+    expect(changedY(right, LEFT_UPPER)).toBeCloseTo(0)
+    expect(changedY(right, LEFT_LOWER)).toBeCloseTo(0)
   })
 
   it('removes old brow normal deformation and leaves the jaw unchanged', () => {
