@@ -102,11 +102,13 @@ export function createDragonMeshEyelidRig(
     if (leftIndex === undefined && rightIndex === undefined) return
 
     const rigVersion = String(object.userData?.faceCamRigVersion ?? '')
+    const meshName = normalizedMorphName(object.name)
+    const isV6Rig = rigVersion === V6_RIG_VERSION || meshName.includes('v6')
     bindings.push({
       influences,
       leftIndex,
       rightIndex,
-      selfTestEnabled: rigVersion === V6_RIG_VERSION,
+      selfTestEnabled: isV6Rig,
       selfTestStartedAt: null,
     })
   })
