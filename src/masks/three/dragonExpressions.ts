@@ -210,14 +210,14 @@ export function estimateDragonExpression(
     metrics.leftBlink,
     calibration.leftBlinkOpen,
     calibration.leftBlinkClosed,
-    0.82,
+    0.5,
     0.1,
   )
   const rightBlinkScore = normalizeCompressedRange(
     metrics.rightBlink,
     calibration.rightBlinkOpen,
     calibration.rightBlinkClosed,
-    0.82,
+    0.5,
     0.1,
   )
 
