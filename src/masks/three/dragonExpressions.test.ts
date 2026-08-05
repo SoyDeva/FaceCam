@@ -103,10 +103,25 @@ describe('estimateDragonExpression', () => {
     expect(expression.jawOpen).toBe(0)
   })
 
-  it('maps normal calibrated speech to visible jaw motion', () => {
+  it('closes between syllables even when MediaPipe jawOpen remains elevated', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.12, 0.0132, 0.14, 0.03),
+      calibration,
+    )
+    expect(expression.jawOpen).toBe(0)
+  })
+
+  it('maps normal speech to a visible but non-saturated jaw position', () => {
     const expression = estimateDragonExpression(resultFor(0.105, 0.027, 0.14, 0.03), calibration)
     expect(expression.jawOpen).toBeGreaterThan(0.45)
-    expect(expression.jawOpen).toBeLessThanOrEqual(1)
+    expect(expression.jawOpen).toBeLessThan(0.7)
+  })
+
+  it('reserves the largest jaw travel for a genuinely wide opening', () => {
+    const normal = estimateDragonExpression(resultFor(0.105, 0.027, 0.14, 0.03), calibration)
+    const wide = estimateDragonExpression(resultFor(0.14, 0.033, 0.14, 0.03), calibration)
+    expect(wide.jawOpen).toBeGreaterThan(normal.jawOpen + 0.2)
+    expect(wide.jawOpen).toBeLessThanOrEqual(0.82)
   })
 
   it('maps a calibrated eye closure to a decisive blink', () => {
@@ -122,13 +137,16 @@ describe('smoothDragonExpression', () => {
     expect(smoothDragonExpression(NEUTRAL_DRAGON_EXPRESSION, next)).toEqual(NEUTRAL_DRAGON_EXPRESSION)
   })
 
-  it('opens and closes quickly enough for speech', () => {
+  it('opens and closes quickly enough for articulated speech', () => {
     const open = smoothDragonExpression(
       NEUTRAL_DRAGON_EXPRESSION,
-      { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.8 },
+      { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.65 },
     )
-    const closed = smoothDragonExpression(open, NEUTRAL_DRAGON_EXPRESSION)
-    expect(open.jawOpen).toBeGreaterThan(0.5)
-    expect(closed.jawOpen).toBeLessThan(open.jawOpen * 0.55)
+    const consonant = smoothDragonExpression(
+      open,
+      { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.1 },
+    )
+    expect(open.jawOpen).toBeGreaterThan(0.45)
+    expect(consonant.jawOpen).toBeLessThan(open.jawOpen * 0.25)
   })
 })

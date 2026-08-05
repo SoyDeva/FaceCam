@@ -58,6 +58,18 @@ function normalizeCalibratedRange(
   return smoothstep(deadZone, 1, normalized)
 }
 
+function normalizeLinearRange(
+  value: number,
+  neutral: number,
+  active: number,
+  deadZone = 0.08,
+): number {
+  const range = active - neutral
+  if (!Number.isFinite(range) || range <= 0.0001) return 0
+  const normalized = (value - neutral) / range
+  return clamp((normalized - deadZone) / Math.max(0.0001, 1 - deadZone))
+}
+
 function normalizeCompressedRange(
   value: number,
   neutral: number,
@@ -94,46 +106,40 @@ export function estimateDragonExpression(
 
   const scores = blendshapeMap(result)
 
-  // Conversational speech rarely reaches the largest opening captured during
-  // calibration. Compressing the calibrated range lets normal syllables use
-  // the full jaw travel without reacting to neutral landmark noise.
-  const jawByBlendshape = normalizeCompressedRange(
-    metrics.jawOpen,
-    calibration.jawNeutral,
-    calibration.jawSpeech,
-    0.7,
-    0.08,
-  )
-  const jawByHeight = normalizeCompressedRange(
+  // Lip separation is the articulation clock. MediaPipe's jawOpen channel can
+  // remain elevated across a whole sentence, so it only supports the vertical
+  // lip signal instead of taking control through a max(). This preserves the
+  // small closures between syllables and reserves full travel for a genuinely
+  // large opening.
+  const lipEvidence = normalizeLinearRange(
     metrics.mouthHeight,
     calibration.mouthHeightNeutral,
     calibration.mouthHeightSpeech,
-    0.64,
-    0.055,
+    0.07,
   )
+  const jawEvidence = normalizeLinearRange(
+    metrics.jawOpen,
+    calibration.jawNeutral,
+    calibration.jawSpeech,
+    0.1,
+  )
+  const supportedJaw = Math.min(jawEvidence, lipEvidence * 2.5 + 0.04)
+  const rawJaw = lipEvidence * 0.62 + supportedJaw * 0.38
 
   const heightRange = Math.max(
     0.006,
     calibration.mouthHeightSpeech - calibration.mouthHeightNeutral,
   )
-  const directLipGap = smoothstep(
-    calibration.mouthHeightNeutral + Math.max(0.0015, heightRange * 0.045),
-    calibration.mouthHeightNeutral + Math.max(0.008, heightRange * 0.52),
-    metrics.mouthHeight,
-  )
-
-  // Width remains excluded: smiling or perspective can widen a closed mouth.
-  // A jaw activation must come from vertical lip separation or jawOpen.
-  const rawJaw = Math.max(jawByHeight, directLipGap, jawByBlendshape * 0.94)
   const jawRange = Math.max(0.02, calibration.jawSpeech - calibration.jawNeutral)
   const neutralLock = metrics.mouthHeight
       <= calibration.mouthHeightNeutral + Math.max(0.0018, heightRange * 0.065)
     && metrics.jawOpen
       <= calibration.jawNeutral + Math.max(0.012, jawRange * 0.075)
   const mouthClose = score(scores, 'mouthClose')
-  const jawOpen = neutralLock || rawJaw < 0.055
+  const articulatedJaw = Math.pow(rawJaw, 0.9) * 0.82
+  const jawOpen = neutralLock || rawJaw < 0.07
     ? 0
-    : clamp(Math.pow(rawJaw, 0.72) - (rawJaw < 0.28 ? mouthClose * 0.08 : 0))
+    : clamp(articulatedJaw - (rawJaw < 0.3 ? mouthClose * 0.12 : 0))
 
   const leftBlinkGeometry = normalizedClosure(
     metrics.leftEyeOpening,
@@ -198,7 +204,7 @@ export function estimateDragonExpression(
 
 function stableJawTarget(previous: number, candidate: number): number {
   if (previous < 0.035 && candidate < 0.18) return 0
-  if (previous >= 0.035 && candidate < 0.05) return 0
+  if (previous >= 0.035 && candidate < 0.13) return 0
   return candidate
 }
 
@@ -219,7 +225,7 @@ export function smoothDragonExpression(
   const rightBlinkTarget = stableBlinkTarget(previous.blinkRight, next.blinkRight)
 
   return {
-    jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.78 : 0.64),
+    jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.72 : 0.78),
     blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.96 : 0.78),
     blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.96 : 0.78),
     gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
