@@ -74,10 +74,10 @@ function score(scores: Map<string, number>, name: string): number {
 }
 
 /**
- * Compresses the low end of a MediaPipe score so normal speech and short
- * blinks use more of the morph target's available range. The exponential
- * response preserves a stable neutral zone while reaching full expression
- * without requiring exaggerated human movement.
+ * Expands the low end of a MediaPipe score. Mobile cameras often report jaw
+ * values below 0.08 during normal speech, even though the lips are visibly
+ * articulating. This response keeps a small neutral zone but makes the useful
+ * conversational range occupy most of the dragon morph.
  */
 function compressedResponse(value: number, deadZone: number, strength: number): number {
   const active = Math.max(0, value - deadZone)
@@ -113,16 +113,17 @@ function mouthLandmarkSignal(result: FaceLandmarkerResult | null): number {
 
   const innerGap = distance2d(upperInner, lowerInner)
   const outerGap = distance2d(upperOuter, lowerOuter)
-  const gap = Math.max(innerGap, outerGap * 0.72)
+  const gap = Math.max(innerGap, outerGap * 0.76)
   const heightRatio = gap / faceHeight
   const widthRatio = gap / mouthWidth
 
-  // Normal conversational articulation often occupies only the first third of
-  // the landmark range. These curves deliberately expose that useful range.
-  const heightSignal = smoothstep(0.0018, 0.061, heightRatio)
-  const widthSignal = smoothstep(0.006, 0.235, widthRatio)
-  const combined = clamp(heightSignal * 0.76 + widthSignal * 0.24)
-  return Math.pow(combined, 0.72)
+  // The thresholds deliberately cover subtle lip separation. The tiny lower
+  // edge suppresses camera noise, while the short upper range makes ordinary
+  // syllables visibly drive the jaw without requiring an exaggerated opening.
+  const heightSignal = smoothstep(0.0009, 0.033, heightRatio)
+  const widthSignal = smoothstep(0.003, 0.13, widthRatio)
+  const combined = clamp(heightSignal * 0.82 + widthSignal * 0.18)
+  return Math.pow(combined, 0.54)
 }
 
 function eyeLandmarkBlink(
@@ -163,8 +164,6 @@ function eyeLandmarkBlink(
     + distance2d(upperC, lowerC)
   ) / (3 * width)
 
-  // Squaring suppresses tiny camera jitter while still producing a decisive
-  // closure as soon as the eyelids approach each other.
   const closure = 1 - smoothstep(0.072, 0.185, opening)
   return clamp(Math.pow(closure, 1.28))
 }
@@ -183,15 +182,18 @@ export function estimateDragonExpression(
   const lookDown = (score(scores, 'eyeLookDownLeft') + score(scores, 'eyeLookDownRight')) / 2
   const lookUp = (score(scores, 'eyeLookUpLeft') + score(scores, 'eyeLookUpRight')) / 2
 
-  const jawBlendshape = compressedResponse(score(scores, 'jawOpen'), 0.003, 7.4)
+  const jawBlendshape = compressedResponse(score(scores, 'jawOpen'), 0.001, 13.5)
   const mouthGeometry = mouthLandmarkSignal(result)
   const lipArticulation = Math.max(
     score(scores, 'mouthFunnel'),
     score(scores, 'mouthPucker'),
-  ) * 0.22
+  ) * 0.34
   const mouthClose = score(scores, 'mouthClose')
-  const jawSignal = Math.max(jawBlendshape, mouthGeometry, lipArticulation)
-  const closeSuppression = jawSignal < 0.2 ? mouthClose * 0.2 : 0
+  const rawJawSignal = Math.max(jawBlendshape, mouthGeometry, lipArticulation)
+  const shapedJawSignal = rawJawSignal <= 0.012
+    ? 0
+    : Math.pow(clamp((rawJawSignal - 0.012) / 0.988), 0.6)
+  const closeSuppression = shapedJawSignal < 0.28 ? mouthClose * 0.26 : 0
 
   const leftBlinkGeometry = eyeLandmarkBlink(result, [
     LANDMARK.leftEyeOuter,
@@ -218,7 +220,7 @@ export function estimateDragonExpression(
   const rightBlinkBlendshape = compressedResponse(score(scores, 'eyeBlinkRight'), 0.008, 7.2)
 
   return {
-    jawOpen: clamp((jawSignal - closeSuppression) * 1.08),
+    jawOpen: clamp((shapedJawSignal - closeSuppression) * 1.16),
     blinkLeft: clamp(Math.max(leftBlinkBlendshape, leftBlinkGeometry)),
     blinkRight: clamp(Math.max(rightBlinkBlendshape, rightBlinkGeometry)),
     gazeX: clamp(
@@ -250,10 +252,10 @@ export function smoothDragonExpression(
   alpha = 0.38,
 ): DragonExpressionState {
   const amount = clamp(alpha)
-  const jawTarget = next.jawOpen < 0.022 ? 0 : next.jawOpen
+  const jawTarget = next.jawOpen < 0.008 ? 0 : next.jawOpen
   const jawAlpha = jawTarget > previous.jawOpen
-    ? Math.max(amount, 0.86)
-    : Math.max(amount, 0.68)
+    ? Math.max(amount, 0.94)
+    : Math.max(amount, 0.76)
   const leftBlinkAlpha = next.blinkLeft > previous.blinkLeft
     ? Math.max(amount, 0.96)
     : Math.max(amount, 0.82)
