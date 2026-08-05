@@ -77,13 +77,71 @@ describe('estimateStaticDragonPose', () => {
 })
 
 describe('smoothStaticDragonPose', () => {
-  it('smooths translation while preserving visibility', () => {
+  it('smooths intentional translation while preserving visibility', () => {
     const previous = estimateStaticDragonPose(resultWithLandmarks())
     const next = { ...previous, eyeCenterX: 0.7, centerX: 0.7 }
     const smoothed = smoothStaticDragonPose(previous, next, 0.5)
 
     expect(smoothed.visible).toBe(true)
-    expect(smoothed.eyeCenterX).toBeCloseTo(0.6)
+    expect(smoothed.eyeCenterX).toBeGreaterThan(0.59)
+    expect(smoothed.eyeCenterX).toBeLessThan(0.61)
+  })
+
+  it('holds sub-pixel head and rotation noise completely still', () => {
+    const previous = estimateStaticDragonPose(resultWithLandmarks())
+    const next = {
+      ...previous,
+      centerX: previous.centerX + 0.001,
+      centerY: previous.centerY - 0.001,
+      eyeCenterX: previous.eyeCenterX + 0.001,
+      eyeCenterY: previous.eyeCenterY - 0.001,
+      yaw: previous.yaw + 0.01,
+      pitch: previous.pitch - 0.01,
+      roll: previous.roll + 0.008,
+    }
+    const smoothed = smoothStaticDragonPose(previous, next)
+
+    expect(smoothed.centerX).toBe(previous.centerX)
+    expect(smoothed.centerY).toBe(previous.centerY)
+    expect(smoothed.eyeCenterX).toBe(previous.eyeCenterX)
+    expect(smoothed.eyeCenterY).toBe(previous.eyeCenterY)
+    expect(smoothed.yaw).toBe(previous.yaw)
+    expect(smoothed.pitch).toBe(previous.pitch)
+    expect(smoothed.roll).toBe(previous.roll)
+  })
+
+  it('ignores weak mouth noise at rest', () => {
+    const previous = {
+      ...estimateStaticDragonPose(resultWithLandmarks()),
+      jawOpen: 0,
+    }
+    const next = { ...previous, jawOpen: 0.16 }
+    const smoothed = smoothStaticDragonPose(previous, next)
+
+    expect(smoothed.jawOpen).toBe(0)
+  })
+
+  it('responds clearly to intentional speech', () => {
+    const previous = {
+      ...estimateStaticDragonPose(resultWithLandmarks()),
+      jawOpen: 0,
+    }
+    const next = { ...previous, jawOpen: 0.8 }
+    const smoothed = smoothStaticDragonPose(previous, next)
+
+    expect(smoothed.jawOpen).toBeGreaterThan(0.45)
+  })
+
+  it('ignores weak eyelid noise but accepts a decisive blink', () => {
+    const previous = {
+      ...estimateStaticDragonPose(resultWithLandmarks()),
+      blinkLeft: 0,
+    }
+    const noisy = smoothStaticDragonPose(previous, { ...previous, blinkLeft: 0.35 })
+    const blink = smoothStaticDragonPose(previous, { ...previous, blinkLeft: 1 })
+
+    expect(noisy.blinkLeft).toBe(0)
+    expect(blink.blinkLeft).toBeGreaterThan(0.8)
   })
 })
 
