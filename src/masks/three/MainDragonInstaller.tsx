@@ -3,14 +3,12 @@ import { runtimeConfig } from '../../config/runtime'
 import { StaticDragonRenderer } from './StaticDragonRenderer'
 import {
   loadLocalDragonModel,
-  removeLocalDragonExpressionCalibration,
-  removeLocalDragonHeadCalibration,
   removeLocalDragonModel,
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v6.glb'
-const OFFICIAL_MODEL_SHA256 = '73804176aa861c52d2a61bc0d31a9ea4dcc45365197ac86bf861233040a19a96'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v7.glb'
+const OFFICIAL_MODEL_SHA256 = '7ee6ef7403768012f97c8370c480ea3b7a5e1e96fe92ad61d9e277c481ea9e5e'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -35,12 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // The SHA-256 check guarantees the exact v6 GLB whose eye morphs are
-    // centered on the two visible sockets. No runtime replacement geometry is
-    // accepted; the renderer must find the facial morph rig in the file.
+    // The SHA-256 check guarantees the exact v7 GLB. Its eye morphs are on
+    // the actual visible eye line around y=0.46, while the base mesh and
+    // jawOpen target remain byte-identical to the previously approved mouth.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó el rig facial del Dragón Blanco v6.',
+        'El modelo guardado no activó el rig facial del Dragón Blanco v7.',
       )
     }
   } finally {
@@ -52,16 +50,11 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco riggeado v6 de FaceCam.',
+      'El archivo no corresponde al Dragón Blanco riggeado v7 de FaceCam.',
     )
   }
 
   await validateCorrectedRig(blob)
-}
-
-function clearModelCalibrations(): void {
-  removeLocalDragonHeadCalibration()
-  removeLocalDragonExpressionCalibration()
 }
 
 export function MainDragonInstaller() {
@@ -79,22 +72,24 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v6 con los morphs centrados en los ojos visibles.')
+          setMessage('Instala el dragón v7 con los morphs sobre la línea real de ambos ojos.')
           return
         }
 
-        setMessage('Verificando el GLB v6 y sus dos cierres oculares…')
+        setMessage('Verificando el GLB v7, los dos ojos y la mandíbula conservada…')
 
         try {
           await validateOfficialRig(stored.blob)
         } catch (validationError) {
           await removeLocalDragonModel()
-          clearModelCalibrations()
           if (cancelled) return
 
+          // v7 changes only the authored eye targets. Keep the existing head
+          // and expression calibration so replacing the GLB cannot regress the
+          // approved mouth response or move the mask on the user's face.
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior. Selecciona el archivo v6 corregido.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v7.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -106,7 +101,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco riggeado v6 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco riggeado v7 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -128,18 +123,17 @@ export function MainDragonInstaller() {
 
     await validateOfficialRig(file)
     await saveLocalDragonModel(file, OFFICIAL_MODEL_NAME)
-    clearModelCalibrations()
   }
 
   async function handleSelection(file: File | undefined): Promise<void> {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v6 y los morph targets de los ojos visibles…')
+    setMessage('Verificando el GLB v7 sin modificar tu calibración de boca…')
 
     try {
       await install(file)
-      setMessage('Dragón v6 instalado. Reiniciando FaceCam y probando los ojos…')
+      setMessage('Dragón v7 instalado. Reiniciando FaceCam y probando únicamente los ojos…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -174,7 +168,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco riggeado v6
+        Dragón Blanco riggeado v7
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -196,7 +190,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v6'}
+            : 'Seleccionar dragón v7'}
       </button>
     </aside>
   )
