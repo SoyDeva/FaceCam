@@ -16,12 +16,13 @@ function resultFor(
   mouthGap: number,
   eyeOpening: number,
   blink: number,
+  mouthWidth = 0.16,
 ): FaceLandmarkerResult {
   const landmarks = Array.from({ length: 478 }, () => landmark(0.5, 0.5))
   landmarks[10] = landmark(0.5, 0.2)
   landmarks[152] = landmark(0.5, 0.8)
-  landmarks[61] = landmark(0.42, 0.56)
-  landmarks[291] = landmark(0.58, 0.56)
+  landmarks[61] = landmark(0.5 - mouthWidth / 2, 0.56)
+  landmarks[291] = landmark(0.5 + mouthWidth / 2, 0.56)
   landmarks[13] = landmark(0.5, 0.56 - mouthGap / 2)
   landmarks[14] = landmark(0.5, 0.56 + mouthGap / 2)
   landmarks[0] = landmark(0.5, 0.56 - mouthGap / 2)
@@ -92,6 +93,14 @@ describe('estimateDragonExpression', () => {
     expect(expression.jawOpen).toBe(0)
     expect(expression.blinkLeft).toBe(0)
     expect(expression.blinkRight).toBe(0)
+  })
+
+  it('does not open the jaw when a closed mouth only becomes wider', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.045, 0.0128, 0.137, 0.04, 0.34),
+      calibration,
+    )
+    expect(expression.jawOpen).toBe(0)
   })
 
   it('maps normal calibrated speech to visible jaw motion', () => {
