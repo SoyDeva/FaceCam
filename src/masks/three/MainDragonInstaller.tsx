@@ -9,9 +9,21 @@ import {
 } from './localAssetStore'
 
 const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v1.glb'
+const OFFICIAL_MODEL_SHA256 = '7383927f4cde931fd6f8153f69cce8d578483e7a80bff9ecbd5920725d34d117'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
+
+async function sha256(blob: Blob): Promise<string> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('Este navegador no permite verificar de forma segura el archivo del dragón.')
+  }
+
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', await blob.arrayBuffer())
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
 
 async function validateNativeRig(blob: Blob): Promise<void> {
   const renderer = new StaticDragonRenderer(
@@ -29,6 +41,17 @@ async function validateNativeRig(blob: Blob): Promise<void> {
   } finally {
     renderer.dispose()
   }
+}
+
+async function validateOfficialRig(blob: Blob): Promise<void> {
+  const fingerprint = await sha256(blob)
+  if (fingerprint !== OFFICIAL_MODEL_SHA256) {
+    throw new Error(
+      'El archivo no corresponde al Dragón Blanco riggeado correcto de FaceCam.',
+    )
+  }
+
+  await validateNativeRig(blob)
 }
 
 export function MainDragonInstaller() {
@@ -50,10 +73,10 @@ export function MainDragonInstaller() {
           return
         }
 
-        setMessage('Validando la mandíbula y los párpados del modelo guardado…')
+        setMessage('Verificando la identidad, mandíbula y párpados del modelo guardado…')
 
         try {
-          await validateNativeRig(stored.blob)
+          await validateOfficialRig(stored.blob)
         } catch (validationError) {
           await removeLocalDragonModel()
           removeLocalDragonHeadCalibration()
@@ -61,14 +84,14 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'Se detectó y eliminó una máscara antigua o incompatible. Selecciona ahora el archivo correcto.',
+            'Se detectó y eliminó una máscara distinta a la versión oficial. Selecciona ahora el archivo correcto.',
           )
 
           // CameraStudio may have started reading the old IndexedDB record in
           // parallel. A single reload guarantees that the incompatible GLB is
           // no longer visible before the replacement is installed.
           window.setTimeout(() => window.location.reload(), 450)
-          console.warn('FaceCam retiró un GLB incompatible.', validationError)
+          console.warn('FaceCam retiró un GLB no oficial o incompatible.', validationError)
           return
         }
 
@@ -96,7 +119,7 @@ export function MainDragonInstaller() {
       throw new Error('El GLB debe pesar entre 1 byte y 15 MB.')
     }
 
-    await validateNativeRig(file)
+    await validateOfficialRig(file)
     await saveLocalDragonModel(file, OFFICIAL_MODEL_NAME)
     removeLocalDragonHeadCalibration()
   }
@@ -105,7 +128,7 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Validando mandíbula, párpados, materiales y geometría del GLB…')
+    setMessage('Verificando identidad, mandíbula, párpados, materiales y geometría del GLB…')
 
     try {
       await install(file)
