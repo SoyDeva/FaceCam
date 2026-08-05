@@ -58,6 +58,23 @@ function normalizeCalibratedRange(
   return smoothstep(deadZone, 1, normalized)
 }
 
+function normalizeCompressedRange(
+  value: number,
+  neutral: number,
+  calibratedActive: number,
+  activeScale: number,
+  deadZone: number,
+): number {
+  const range = calibratedActive - neutral
+  if (!Number.isFinite(range) || range <= 0.0001) return 0
+  return normalizeCalibratedRange(
+    value,
+    neutral,
+    neutral + range * activeScale,
+    deadZone,
+  )
+}
+
 function normalizedClosure(
   opening: number,
   openValue: number,
@@ -65,7 +82,7 @@ function normalizedClosure(
 ): number {
   const range = openValue - closedValue
   if (!Number.isFinite(range) || range <= 0.006) return 0
-  return smoothstep(0.16, 0.92, (openValue - opening) / range)
+  return smoothstep(0.08, 0.78, (openValue - opening) / range)
 }
 
 export function estimateDragonExpression(
@@ -76,31 +93,47 @@ export function estimateDragonExpression(
   if (!metrics || !calibration) return { ...NEUTRAL_DRAGON_EXPRESSION }
 
   const scores = blendshapeMap(result)
-  const jawByBlendshape = normalizeCalibratedRange(
+
+  // Conversational speech rarely reaches the largest opening captured during
+  // calibration. Compressing the calibrated range lets normal syllables use
+  // the full jaw travel without reacting to neutral landmark noise.
+  const jawByBlendshape = normalizeCompressedRange(
     metrics.jawOpen,
     calibration.jawNeutral,
     calibration.jawSpeech,
-    0.18,
+    0.7,
+    0.08,
   )
-  const jawByHeight = normalizeCalibratedRange(
+  const jawByHeight = normalizeCompressedRange(
     metrics.mouthHeight,
     calibration.mouthHeightNeutral,
     calibration.mouthHeightSpeech,
-    0.16,
+    0.64,
+    0.055,
   )
 
-  // Mouth width is intentionally not an opening signal. Smiles, perspective,
-  // moustaches and landmark drift can widen the mouth while the lips remain
-  // closed. A real jaw activation must be supported by vertical lip separation
-  // or MediaPipe's jawOpen channel.
-  const jawPeak = Math.max(jawByBlendshape, jawByHeight)
-  const jawAgreement = Math.min(jawByBlendshape, jawByHeight)
-  const rawJaw = jawPeak * (0.82 + jawAgreement * 0.18)
-  const neutralLock = jawByBlendshape < 0.22 && jawByHeight < 0.22
+  const heightRange = Math.max(
+    0.006,
+    calibration.mouthHeightSpeech - calibration.mouthHeightNeutral,
+  )
+  const directLipGap = smoothstep(
+    calibration.mouthHeightNeutral + Math.max(0.0015, heightRange * 0.045),
+    calibration.mouthHeightNeutral + Math.max(0.008, heightRange * 0.52),
+    metrics.mouthHeight,
+  )
+
+  // Width remains excluded: smiling or perspective can widen a closed mouth.
+  // A jaw activation must come from vertical lip separation or jawOpen.
+  const rawJaw = Math.max(jawByHeight, directLipGap, jawByBlendshape * 0.94)
+  const jawRange = Math.max(0.02, calibration.jawSpeech - calibration.jawNeutral)
+  const neutralLock = metrics.mouthHeight
+      <= calibration.mouthHeightNeutral + Math.max(0.0018, heightRange * 0.065)
+    && metrics.jawOpen
+      <= calibration.jawNeutral + Math.max(0.012, jawRange * 0.075)
   const mouthClose = score(scores, 'mouthClose')
-  const jawOpen = neutralLock || rawJaw < 0.12
+  const jawOpen = neutralLock || rawJaw < 0.055
     ? 0
-    : clamp(Math.pow(rawJaw, 0.88) - (rawJaw < 0.34 ? mouthClose * 0.18 : 0))
+    : clamp(Math.pow(rawJaw, 0.72) - (rawJaw < 0.28 ? mouthClose * 0.08 : 0))
 
   const leftBlinkGeometry = normalizedClosure(
     metrics.leftEyeOpening,
@@ -112,20 +145,22 @@ export function estimateDragonExpression(
     calibration.rightEyeOpen,
     calibration.rightEyeClosed,
   )
-  const leftBlinkScore = normalizeCalibratedRange(
+  const leftBlinkScore = normalizeCompressedRange(
     metrics.leftBlink,
     calibration.leftBlinkOpen,
     calibration.leftBlinkClosed,
-    0.18,
+    0.82,
+    0.1,
   )
-  const rightBlinkScore = normalizeCalibratedRange(
+  const rightBlinkScore = normalizeCompressedRange(
     metrics.rightBlink,
     calibration.rightBlinkOpen,
     calibration.rightBlinkClosed,
-    0.18,
+    0.82,
+    0.1,
   )
-  const blinkLeft = Math.max(leftBlinkGeometry, leftBlinkScore)
-  const blinkRight = Math.max(rightBlinkGeometry, rightBlinkScore)
+  const blinkLeft = Math.pow(Math.max(leftBlinkGeometry, leftBlinkScore), 0.72)
+  const blinkRight = Math.pow(Math.max(rightBlinkGeometry, rightBlinkScore), 0.72)
 
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
@@ -136,8 +171,8 @@ export function estimateDragonExpression(
 
   return {
     jawOpen,
-    blinkLeft: blinkLeft < 0.1 ? 0 : blinkLeft,
-    blinkRight: blinkRight < 0.1 ? 0 : blinkRight,
+    blinkLeft: blinkLeft < 0.075 ? 0 : clamp(blinkLeft),
+    blinkRight: blinkRight < 0.075 ? 0 : clamp(blinkRight),
     gazeX: clamp(
       ((lookOutLeft - lookInLeft) + (lookInRight - lookOutRight)) / 2,
       -1,
@@ -162,14 +197,14 @@ export function estimateDragonExpression(
 }
 
 function stableJawTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.2) return 0
-  if (previous >= 0.035 && candidate < 0.065) return 0
+  if (previous < 0.035 && candidate < 0.18) return 0
+  if (previous >= 0.035 && candidate < 0.05) return 0
   return candidate
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.06 && candidate < 0.45) return 0
-  if (previous >= 0.06 && candidate < 0.1) return 0
+  if (previous < 0.06 && candidate < 0.4) return 0
+  if (previous >= 0.06 && candidate < 0.08) return 0
   return candidate
 }
 
@@ -184,9 +219,9 @@ export function smoothDragonExpression(
   const rightBlinkTarget = stableBlinkTarget(previous.blinkRight, next.blinkRight)
 
   return {
-    jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.68 : 0.58),
-    blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.92 : 0.7),
-    blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.92 : 0.7),
+    jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.78 : 0.64),
+    blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.96 : 0.78),
+    blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.96 : 0.78),
     gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
     gazeY: lerp(previous.gazeY, next.gazeY, Math.min(amount, 0.22)),
     smile: lerp(previous.smile, next.smile, Math.min(amount, 0.24)),
