@@ -45,11 +45,13 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify corrected installer bundle
+      - name: Verify GLB v4 installer bundle
         run: |
           set -euo pipefail
           obsolete='El modelo guardado no contiene mandíbula y ambos parpadeos nativos.'
-          corrected='El modelo guardado no activó la mandíbula riggeada del dragón oficial.'
+          corrected='El modelo guardado no activó el rig facial del Dragón Blanco v4.'
+          model='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v4.glb'
+          fingerprint='eb822d8e9b2bbff36d080d7b1f6bd32ee856c6890ffd78691194be9782695d70'
 
           if grep -R -Fq "$obsolete" dist; then
             echo "::error::El paquete contiene la validación antigua del dragón."
@@ -57,7 +59,17 @@ jobs:
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación corregida del dragón."
+            echo "::error::El paquete no contiene la validación facial v4."
+            exit 1
+          fi
+
+          if ! grep -R -Fq "$model" dist; then
+            echo "::error::El paquete no solicita el GLB v4 oficial."
+            exit 1
+          fi
+
+          if ! grep -R -Fq "$fingerprint" dist; then
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v4."
             exit 1
           fi
 
