@@ -37,11 +37,10 @@ import type { StaticDragonHeadCalibration } from './headCalibration'
 import type { StaticDragonPoseEstimate } from './staticPose'
 import { resolveStaticDragonYaw } from './staticPose'
 import {
-  configureDragonEyelidOverlay,
-  createDragonEyelidOverlay,
-  disposeDragonEyelidOverlay,
-  drawDragonEyelidOverlay,
-} from './dragonEyelidFallback'
+  applyDragonMeshEyelidRig,
+  createDragonMeshEyelidRig,
+  type DragonMeshEyelidBinding,
+} from './dragonMeshEyelidRig'
 
 export interface StaticDragonCalibration {
   scaleMultiplier: number
@@ -291,14 +290,7 @@ export class StaticDragonRenderer {
   private readonly privacyGroup = new Group()
   private readonly auraGroup = new Group()
   private readonly privacyMesh: Mesh
-  private readonly leftEyelidOverlay = createDragonEyelidOverlay(
-    'WhiteDragon_AnatomicalEyelid_Left',
-  )
-  private readonly rightEyelidOverlay = createDragonEyelidOverlay(
-    'WhiteDragon_AnatomicalEyelid_Right',
-  )
-  private lastBlinkLeft = -1
-  private lastBlinkRight = -1
+  private proceduralEyelids: DragonMeshEyelidBinding[] = []
   private readonly auraBloomTexture = createCelestialBloomTexture()
   private readonly auraRaysTexture = createCelestialRaysTexture()
   private readonly auraParticleTexture = createParticleTexture()
@@ -367,10 +359,6 @@ export class StaticDragonRenderer {
     this.privacyMesh.name = 'WhiteDragon_PrivateHeadOccluder'
     this.privacyMesh.position.z = -1.42
     this.privacyMesh.frustumCulled = false
-    this.modelContainer.add(
-      this.leftEyelidOverlay.mesh,
-      this.rightEyelidOverlay.mesh,
-    )
 
     this.auraBloom = new Sprite(new SpriteMaterial({
       map: this.auraBloomTexture,
@@ -515,7 +503,10 @@ export class StaticDragonRenderer {
 
       this.collectMorphBindings(gltf.scene)
       this.hasNativeJaw = this.hasMorph('jawOpen')
-      this.hasNativeBlink = this.hasMorph('blinkLeft') && this.hasMorph('blinkRight')
+      // The installed dragon advertises blink morphs, but they deform the
+      // snout instead of closing the eyelids. Keep them disabled and move
+      // only the dragon mesh vertices around each real eye.
+      this.hasNativeBlink = false
       this.hasNativeGaze = this.hasMorph('eyeLookInLeft')
         || this.hasMorph('eyeLookOutLeft')
         || this.hasMorph('eyeLookInRight')
@@ -525,7 +516,13 @@ export class StaticDragonRenderer {
         if (object instanceof Mesh) object.frustumCulled = false
       })
 
-      this.configureEyelidFallback(bounds, size, center, modelEyeY)
+      this.proceduralEyelids = createDragonMeshEyelidRig(
+        gltf.scene,
+        bounds,
+        size,
+        center,
+        modelEyeY,
+      )
       this.modelWidth = size.x
       this.modelNeckDrop = Math.max(0.001, modelEyeY - bounds.min.y)
       this.modelRoot = gltf.scene
@@ -661,8 +658,6 @@ export class StaticDragonRenderer {
     this.disposeMaterial(this.auraParticles.material as Material)
     this.auraSparklesField.geometry.dispose()
     this.disposeMaterial(this.auraSparkles.material as Material)
-    disposeDragonEyelidOverlay(this.leftEyelidOverlay)
-    disposeDragonEyelidOverlay(this.rightEyelidOverlay)
     this.renderer.dispose()
     this.renderer.forceContextLoss()
   }
@@ -780,8 +775,6 @@ export class StaticDragonRenderer {
 
     for (const binding of this.morphBindings) {
       this.setMorph(binding, 'jawOpen', expression.jawOpen)
-      this.setMorph(binding, 'blinkLeft', expression.blinkLeft)
-      this.setMorph(binding, 'blinkRight', expression.blinkRight)
       this.setMorph(binding, 'smileLeft', expression.smile)
       this.setMorph(binding, 'smileRight', expression.smile)
       this.setMorph(binding, 'eyeLookInLeft', horizontalRight)
@@ -797,55 +790,11 @@ export class StaticDragonRenderer {
       this.setMorph(binding, 'browOuterUpRight', expression.browRaise)
     }
 
-    this.updateEyelidFallback(expression)
-  }
-
-  private configureEyelidFallback(
-    bounds: Box3,
-    size: Vector3,
-    center: Vector3,
-    modelEyeY: number,
-  ): void {
-    const frontZ = bounds.max.z - center.z + size.z * 0.018
-    const eyeY = bounds.min.y + size.y * 0.575 - modelEyeY
-    const eyeX = size.x * 0.17
-    const eyeWidth = size.x * 0.205
-    const eyeHeight = size.y * 0.09
-
-    configureDragonEyelidOverlay(
-      this.leftEyelidOverlay,
-      -eyeX,
-      eyeY,
-      frontZ,
-      eyeWidth,
-      eyeHeight,
-      0.09,
+    applyDragonMeshEyelidRig(
+      this.proceduralEyelids,
+      expression.blinkLeft,
+      expression.blinkRight,
     )
-    configureDragonEyelidOverlay(
-      this.rightEyelidOverlay,
-      eyeX,
-      eyeY,
-      frontZ,
-      eyeWidth,
-      eyeHeight,
-      -0.09,
-    )
-    this.lastBlinkLeft = -1
-    this.lastBlinkRight = -1
-  }
-
-  private updateEyelidFallback(expression: DragonExpressionState): void {
-    const leftBlink = clamp(expression.blinkLeft * 1.16, 0, 1)
-    const rightBlink = clamp(expression.blinkRight * 1.16, 0, 1)
-
-    if (Math.abs(leftBlink - this.lastBlinkLeft) > 0.008) {
-      drawDragonEyelidOverlay(this.leftEyelidOverlay, leftBlink, 'left')
-      this.lastBlinkLeft = leftBlink
-    }
-    if (Math.abs(rightBlink - this.lastBlinkRight) > 0.008) {
-      drawDragonEyelidOverlay(this.rightEyelidOverlay, rightBlink, 'right')
-      this.lastBlinkRight = rightBlink
-    }
   }
 
   private setMorph(binding: MorphBinding, semantic: MorphSemantic, value: number): void {
@@ -878,10 +827,7 @@ export class StaticDragonRenderer {
     this.hasNativeJaw = false
     this.hasNativeBlink = false
     this.hasNativeGaze = false
-    this.leftEyelidOverlay.mesh.visible = false
-    this.rightEyelidOverlay.mesh.visible = false
-    this.lastBlinkLeft = -1
-    this.lastBlinkRight = -1
+    this.proceduralEyelids.length = 0
   }
 
   private disposeMaterial(material: Material): void {
