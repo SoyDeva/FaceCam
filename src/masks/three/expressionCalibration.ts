@@ -68,7 +68,7 @@ const LANDMARK = {
 
 const NEUTRAL_SAMPLE_TARGET = 24
 const SPEECH_SAMPLE_TARGET = 28
-const BLINK_SAMPLE_TARGET = 12
+const BLINK_SAMPLE_TARGET = 6
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value))
@@ -218,13 +218,13 @@ function hasRealBilateralClosure(
   const leftBlendshape = blendshapeClosure(metrics.leftBlink, neutral.leftBlink)
   const rightBlendshape = blendshapeClosure(metrics.rightBlink, neutral.rightBlink)
 
-  // Each eye must show its own geometric closure. MediaPipe's blendshape can
-  // support a short or partially occluded frame, but it can never allow one
-  // eye, a brow movement or a mislabeled signal to complete both-eye capture.
-  const leftClosed = leftGeometry >= 0.44
-    || (leftGeometry >= 0.28 && leftBlendshape >= 0.58)
-  const rightClosed = rightGeometry >= 0.44
-    || (rightGeometry >= 0.28 && rightBlendshape >= 0.58)
+  // Both eyes must provide their own geometric evidence. The blendshape helps
+  // with brief natural blinks, but cannot turn a wink or eyebrow motion into a
+  // bilateral closure.
+  const leftClosed = leftGeometry >= 0.34
+    || (leftGeometry >= 0.2 && leftBlendshape >= 0.42)
+  const rightClosed = rightGeometry >= 0.34
+    || (rightGeometry >= 0.2 && rightBlendshape >= 0.42)
 
   return leftClosed && rightClosed
 }
@@ -352,8 +352,8 @@ export class DragonExpressionCalibrator {
     }
 
     if (this.currentPhase === 'neutral') {
-      const eyesOpen = metrics.leftEyeOpening > 0.065
-        && metrics.rightEyeOpening > 0.065
+      const eyesOpen = metrics.leftEyeOpening > 0.055
+        && metrics.rightEyeOpening > 0.055
         && metrics.leftBlink < 0.38
         && metrics.rightBlink < 0.38
       const expressionNeutral = metrics.jawOpen < 0.45

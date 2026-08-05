@@ -1,6 +1,6 @@
 import { Mesh, type Box3, type Object3D, type Vector3 } from 'three'
 
-const BLINK_DEAD_ZONE = 0.035
+const BLINK_DEAD_ZONE = 0.02
 const LEFT_BLINK_ALIASES = ['eyeBlinkLeft', 'blinkLeft'] as const
 const RIGHT_BLINK_ALIASES = ['eyeBlinkRight', 'blinkRight'] as const
 
@@ -39,9 +39,10 @@ function resolveMorphIndex(
 }
 
 /**
- * The v4 GLB stores complete eye closure at morph influence 1. A small dead
- * zone rejects camera noise while the smoothstep curve keeps the closure fast
- * and the reopening natural.
+ * The v4 GLB stores complete eye closure at morph influence 1. The incoming
+ * expression already contains noise rejection, so this final response curve
+ * prioritizes a clearly visible closure instead of leaving natural blinks at
+ * an imperceptible fraction of the authored morph travel.
  */
 export function resolveNativeDragonBlinkInfluence(blink: number): number {
   const safeBlink = clamp(blink)
@@ -51,7 +52,7 @@ export function resolveNativeDragonBlinkInfluence(blink: number): number {
     (safeBlink - BLINK_DEAD_ZONE) / (1 - BLINK_DEAD_ZONE),
   )
   const eased = normalized * normalized * (3 - 2 * normalized)
-  return Math.pow(eased, 0.72)
+  return clamp(Math.pow(eased, 0.46) * 1.08)
 }
 
 export function createDragonMeshEyelidRig(

@@ -84,7 +84,7 @@ describe('DragonExpressionCalibrator', () => {
     advanceToBlink(calibrator)
 
     let calibration = null
-    for (let index = 0; index < 12; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       calibration = calibrator.capture(bothEyesClosed()).calibration
     }
 
@@ -97,6 +97,22 @@ describe('DragonExpressionCalibrator', () => {
     expect(calibration?.leftBlinkClosed).toBeGreaterThan(calibration?.leftBlinkOpen ?? 1)
     expect(calibration?.rightBlinkClosed).toBeGreaterThan(calibration?.rightBlinkOpen ?? 1)
     expect(calibration?.quality).toBeGreaterThan(0.5)
+  })
+
+  it('accumulates a brief natural bilateral blink instead of requiring a long hold', () => {
+    const calibrator = new DragonExpressionCalibrator()
+    calibrator.start()
+    advanceToBlink(calibrator)
+
+    let calibration = null
+    for (let index = 0; index < 6; index += 1) {
+      calibration = calibrator.capture(
+        resultFor(0.04, 0.012, 0.1, 0.1, 0.55, 0.55),
+      ).calibration
+    }
+
+    expect(calibrator.phase).toBe('complete')
+    expect(calibration).not.toBeNull()
   })
 
   it('does not advance speech while the user remains neutral', () => {
