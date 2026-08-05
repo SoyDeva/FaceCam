@@ -1,0 +1,189 @@
+name: Patch anatomical eyelids
+
+on:
+  push:
+    branches:
+      - agent/anatomical-eyelid-fallback
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/anatomical-eyelid-fallback
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Patch renderer
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/masks/three/StaticDragonRenderer.ts')
+          source = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global source
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected one renderer match, found {count}: {old[:80]!r}')
+              source = source.replace(old, new, 1)
+
+          replace_once(
+              "import { resolveStaticDragonYaw } from './staticPose'\n",
+              "import { resolveStaticDragonYaw } from './staticPose'\n"
+              "import {\n"
+              "  configureDragonEyelidOverlay,\n"
+              "  createDragonEyelidOverlay,\n"
+              "  disposeDragonEyelidOverlay,\n"
+              "  drawDragonEyelidOverlay,\n"
+              "} from './dragonEyelidFallback'\n",
+          )
+
+          replace_once(
+              "  private readonly auraGroup = new Group()\n"
+              "  private readonly privacyMesh: Mesh\n"
+              "  private readonly auraBloomTexture = createCelestialBloomTexture()\n",
+              "  private readonly auraGroup = new Group()\n"
+              "  private readonly privacyMesh: Mesh\n"
+              "  private readonly leftEyelidOverlay = createDragonEyelidOverlay(\n"
+              "    'WhiteDragon_AnatomicalEyelid_Left',\n"
+              "  )\n"
+              "  private readonly rightEyelidOverlay = createDragonEyelidOverlay(\n"
+              "    'WhiteDragon_AnatomicalEyelid_Right',\n"
+              "  )\n"
+              "  private lastBlinkLeft = -1\n"
+              "  private lastBlinkRight = -1\n"
+              "  private readonly auraBloomTexture = createCelestialBloomTexture()\n",
+          )
+
+          replace_once(
+              "    this.privacyMesh.position.z = -1.42\n"
+              "    this.privacyMesh.frustumCulled = false\n\n"
+              "    this.auraBloom = new Sprite(new SpriteMaterial({\n",
+              "    this.privacyMesh.position.z = -1.42\n"
+              "    this.privacyMesh.frustumCulled = false\n"
+              "    this.modelContainer.add(\n"
+              "      this.leftEyelidOverlay.mesh,\n"
+              "      this.rightEyelidOverlay.mesh,\n"
+              "    )\n\n"
+              "    this.auraBloom = new Sprite(new SpriteMaterial({\n",
+          )
+
+          replace_once(
+              "      gltf.scene.traverse((object) => {\n"
+              "        if (object instanceof Mesh) object.frustumCulled = false\n"
+              "      })\n\n"
+              "      this.modelWidth = size.x\n",
+              "      gltf.scene.traverse((object) => {\n"
+              "        if (object instanceof Mesh) object.frustumCulled = false\n"
+              "      })\n\n"
+              "      this.configureEyelidFallback(bounds, size, center, modelEyeY)\n"
+              "      this.modelWidth = size.x\n",
+          )
+
+          replace_once(
+              "    this.auraSparklesField.geometry.dispose()\n"
+              "    this.disposeMaterial(this.auraSparkles.material as Material)\n"
+              "    this.renderer.dispose()\n",
+              "    this.auraSparklesField.geometry.dispose()\n"
+              "    this.disposeMaterial(this.auraSparkles.material as Material)\n"
+              "    disposeDragonEyelidOverlay(this.leftEyelidOverlay)\n"
+              "    disposeDragonEyelidOverlay(this.rightEyelidOverlay)\n"
+              "    this.renderer.dispose()\n",
+          )
+
+          replace_once(
+              "      this.setMorph(binding, 'browOuterUpRight', expression.browRaise)\n"
+              "    }\n"
+              "  }\n\n"
+              "  private setMorph(binding: MorphBinding, semantic: MorphSemantic, value: number): void {\n",
+              "      this.setMorph(binding, 'browOuterUpRight', expression.browRaise)\n"
+              "    }\n\n"
+              "    this.updateEyelidFallback(expression)\n"
+              "  }\n\n"
+              "  private configureEyelidFallback(\n"
+              "    bounds: Box3,\n"
+              "    size: Vector3,\n"
+              "    center: Vector3,\n"
+              "    modelEyeY: number,\n"
+              "  ): void {\n"
+              "    const frontZ = bounds.max.z - center.z + size.z * 0.018\n"
+              "    const eyeY = bounds.min.y + size.y * 0.575 - modelEyeY\n"
+              "    const eyeX = size.x * 0.17\n"
+              "    const eyeWidth = size.x * 0.205\n"
+              "    const eyeHeight = size.y * 0.09\n\n"
+              "    configureDragonEyelidOverlay(\n"
+              "      this.leftEyelidOverlay,\n"
+              "      -eyeX,\n"
+              "      eyeY,\n"
+              "      frontZ,\n"
+              "      eyeWidth,\n"
+              "      eyeHeight,\n"
+              "      0.09,\n"
+              "    )\n"
+              "    configureDragonEyelidOverlay(\n"
+              "      this.rightEyelidOverlay,\n"
+              "      eyeX,\n"
+              "      eyeY,\n"
+              "      frontZ,\n"
+              "      eyeWidth,\n"
+              "      eyeHeight,\n"
+              "      -0.09,\n"
+              "    )\n"
+              "    this.lastBlinkLeft = -1\n"
+              "    this.lastBlinkRight = -1\n"
+              "  }\n\n"
+              "  private updateEyelidFallback(expression: DragonExpressionState): void {\n"
+              "    const leftBlink = clamp(expression.blinkLeft * 1.16, 0, 1)\n"
+              "    const rightBlink = clamp(expression.blinkRight * 1.16, 0, 1)\n\n"
+              "    if (Math.abs(leftBlink - this.lastBlinkLeft) > 0.008) {\n"
+              "      drawDragonEyelidOverlay(this.leftEyelidOverlay, leftBlink, 'left')\n"
+              "      this.lastBlinkLeft = leftBlink\n"
+              "    }\n"
+              "    if (Math.abs(rightBlink - this.lastBlinkRight) > 0.008) {\n"
+              "      drawDragonEyelidOverlay(this.rightEyelidOverlay, rightBlink, 'right')\n"
+              "      this.lastBlinkRight = rightBlink\n"
+              "    }\n"
+              "  }\n\n"
+              "  private setMorph(binding: MorphBinding, semantic: MorphSemantic, value: number): void {\n",
+          )
+
+          replace_once(
+              "    this.hasNativeJaw = false\n"
+              "    this.hasNativeBlink = false\n"
+              "    this.hasNativeGaze = false\n"
+              "  }\n",
+              "    this.hasNativeJaw = false\n"
+              "    this.hasNativeBlink = false\n"
+              "    this.hasNativeGaze = false\n"
+              "    this.leftEyelidOverlay.mesh.visible = false\n"
+              "    this.rightEyelidOverlay.mesh.visible = false\n"
+              "    this.lastBlinkLeft = -1\n"
+              "    this.lastBlinkRight = -1\n"
+              "  }\n",
+          )
+
+          path.write_text(source)
+          PY
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - name: Commit renderer integration
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/masks/three/StaticDragonRenderer.ts
+          git commit -m "Integrate anatomical eyelid fallback"
+          git push origin HEAD:agent/anatomical-eyelid-fallback
