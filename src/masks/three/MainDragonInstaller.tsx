@@ -26,7 +26,7 @@ async function sha256(blob: Blob): Promise<string> {
     .join('')
 }
 
-async function validateNativeRig(blob: Blob): Promise<void> {
+async function validateCorrectedRig(blob: Blob): Promise<void> {
   const renderer = new StaticDragonRenderer(
     runtimeConfig.outputWidth,
     runtimeConfig.outputHeight,
@@ -34,9 +34,14 @@ async function validateNativeRig(blob: Blob): Promise<void> {
 
   try {
     await renderer.load(blob)
-    if (renderer.facialRigMode !== 'native') {
+
+    // El dragón corregido usa un rig híbrido deliberado: la mandíbula sigue
+    // siendo un morph target nativo, mientras que los párpados deforman los
+    // vértices reales del modelo porque los morphs de blink del GLB movían el
+    // hocico. Por eso su modo válido es native-partial, no exclusivamente native.
+    if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no contiene mandíbula y ambos parpadeos nativos.',
+        'El modelo guardado no activó la mandíbula riggeada del dragón oficial.',
       )
     }
   } finally {
@@ -52,7 +57,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
     )
   }
 
-  await validateNativeRig(blob)
+  await validateCorrectedRig(blob)
 }
 
 function clearModelCalibrations(): void {
