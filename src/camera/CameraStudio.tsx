@@ -4,6 +4,11 @@ import { runtimeConfig } from '../config/runtime'
 import { supabase } from '../config/supabase'
 import { drawWhiteDragon } from '../masks/dragonPlaceholder'
 import {
+  DragonExpressionCalibrator,
+  type DragonExpressionCalibration,
+  type DragonExpressionCalibrationPhase,
+} from '../masks/three/expressionCalibration'
+import {
   StaticDragonRenderer,
   type StaticDragonCalibration,
 } from '../masks/three/StaticDragonRenderer'
@@ -13,8 +18,11 @@ import {
 } from '../masks/three/headCalibration'
 import {
   loadLocalDragonCalibration,
+  loadLocalDragonExpressionCalibration,
   loadLocalDragonHeadCalibration,
   loadLocalDragonModel,
+  removeLocalDragonExpressionCalibration,
+  saveLocalDragonExpressionCalibration,
   saveLocalDragonHeadCalibration,
 } from '../masks/three/localAssetStore'
 import {
@@ -59,8 +67,29 @@ function fitCameraOutput(videoWidth: number, videoHeight: number): OutputSize {
   }
 }
 
+function expressionInstruction(phase: DragonExpressionCalibrationPhase): string {
+  if (phase === 'neutral') {
+    return 'Calibración facial 1/3: mira al frente, mantén la boca cerrada y ambos ojos abiertos.'
+  }
+  if (phase === 'speech') {
+    return 'Calibración facial 2/3: di “ma-pa-la” varias veces con una apertura normal, sin exagerar.'
+  }
+  if (phase === 'blink') {
+    return 'Calibración facial 3/3: cierra ambos ojos dos veces de forma clara.'
+  }
+  return 'Calibración facial completada.'
+}
+
+function expressionPhaseLabel(phase: DragonExpressionCalibrationPhase): string {
+  if (phase === 'neutral') return 'Neutral 1/3'
+  if (phase === 'speech') return 'Habla 2/3'
+  if (phase === 'blink') return 'Parpadeo 3/3'
+  return 'Completa'
+}
+
 export function CameraStudio({ userId }: CameraStudioProps) {
   const initialHeadCalibration = loadLocalDragonHeadCalibration()
+  const initialExpressionCalibration = loadLocalDragonExpressionCalibration()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -73,6 +102,9 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   const dragonCalibrationRef = useRef<StaticDragonCalibration>(loadLocalDragonCalibration())
   const headCalibrationRef = useRef<StaticDragonHeadCalibration | null>(initialHeadCalibration)
   const headCalibratorRef = useRef(new StaticDragonHeadCalibrator())
+  const expressionCalibrationRef = useRef<DragonExpressionCalibration | null>(initialExpressionCalibration)
+  const expressionCalibratorRef = useRef(new DragonExpressionCalibrator())
+  const expressionPhaseRef = useRef<DragonExpressionCalibrationPhase>('neutral')
   const smoothedPoseRef = useRef<StaticDragonPoseEstimate | null>(null)
   const useThreeDragonRef = useRef(true)
   const recordingStartedAtRef = useRef(0)
@@ -92,6 +124,11 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   const [calibratingHead, setCalibratingHead] = useState(false)
   const [headCalibrationProgress, setHeadCalibrationProgress] = useState(0)
   const [headCalibrated, setHeadCalibrated] = useState(Boolean(initialHeadCalibration))
+  const [calibratingExpression, setCalibratingExpression] = useState(false)
+  const [expressionCalibrationProgress, setExpressionCalibrationProgress] = useState(0)
+  const [expressionPhase, setExpressionPhase] = useState<DragonExpressionCalibrationPhase>('neutral')
+  const [expressionCalibrated, setExpressionCalibrated] = useState(Boolean(initialExpressionCalibration))
+  const [expressionQuality, setExpressionQuality] = useState(initialExpressionCalibration?.quality ?? 0)
   const [status, setStatus] = useState<StudioStatus>('idle')
   const [message, setMessage] = useState('Activa la cámara para comenzar.')
   const [elapsedMs, setElapsedMs] = useState(0)
@@ -109,12 +146,37 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     if (error) console.warn('No fue posible guardar la preferencia.', error)
   }, [userId])
 
+  const startExpressionCalibration = useCallback(() => {
+    if (!dragonReadyRef.current || !trackerReadyRef.current || !streamRef.current) {
+      setMessage('Activa la cámara y espera a que el dragón 3D termine de cargar.')
+      return
+    }
+    if (!headCalibrationRef.current) {
+      setMessage('Primero termina la calibración de cabeza.')
+      return
+    }
+
+    expressionCalibratorRef.current.start()
+    expressionPhaseRef.current = 'neutral'
+    expressionCalibrationRef.current = null
+    removeLocalDragonExpressionCalibration()
+    smoothedPoseRef.current = null
+    setCalibratingExpression(true)
+    setExpressionCalibrated(false)
+    setExpressionQuality(0)
+    setExpressionPhase('neutral')
+    setExpressionCalibrationProgress(0)
+    setMessage(expressionInstruction('neutral'))
+  }, [])
+
   const startHeadCalibration = useCallback(() => {
     if (!dragonReadyRef.current || !trackerReadyRef.current || !streamRef.current) {
       setMessage('Activa la cámara y espera a que el dragón 3D termine de cargar.')
       return
     }
 
+    expressionCalibratorRef.current.cancel()
+    setCalibratingExpression(false)
     headCalibratorRef.current.start()
     headCalibrationRef.current = null
     smoothedPoseRef.current = null
@@ -164,11 +226,15 @@ export function CameraStudio({ userId }: CameraStudioProps) {
           dragonReadyRef.current = true
           dragonCalibrationRef.current = loadLocalDragonCalibration()
           headCalibrationRef.current = loadLocalDragonHeadCalibration()
+          expressionCalibrationRef.current = loadLocalDragonExpressionCalibration()
           setHeadCalibrated(Boolean(headCalibrationRef.current))
+          setExpressionCalibrated(Boolean(expressionCalibrationRef.current))
+          setExpressionQuality(expressionCalibrationRef.current?.quality ?? 0)
           setDragonInstalled(true)
 
           if (trackerReadyRef.current && streamRef.current && useThreeDragonRef.current) {
-            startHeadCalibration()
+            if (!headCalibrationRef.current) startHeadCalibration()
+            else if (!expressionCalibrationRef.current) startExpressionCalibration()
           }
         } catch (error) {
           renderer.dispose()
@@ -182,7 +248,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     return () => {
       cancelled = true
     }
-  }, [startHeadCalibration])
+  }, [startExpressionCalibration, startHeadCalibration])
 
   useEffect(() => {
     dragonRendererRef.current?.setSize(outputSize.width, outputSize.height)
@@ -219,7 +285,10 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       }
     }
 
-    const rawPose = estimateStaticDragonPose(lastResultRef.current)
+    const rawPose = estimateStaticDragonPose(
+      lastResultRef.current,
+      expressionCalibrationRef.current,
+    )
     if (freshTrackingFrame && headCalibratorRef.current.active) {
       const capture = headCalibratorRef.current.capture(rawPose)
       if (capture.accepted) setHeadCalibrationProgress(capture.progress)
@@ -228,7 +297,30 @@ export function CameraStudio({ userId }: CameraStudioProps) {
         saveLocalDragonHeadCalibration(capture.calibration)
         setCalibratingHead(false)
         setHeadCalibrated(true)
-        setMessage('Cabeza calibrada. Los ojos quedaron anclados y la escala permanecerá fija al girar.')
+        setMessage('Cabeza calibrada. Continúa con la calibración facial guiada.')
+        window.setTimeout(startExpressionCalibration, 250)
+      }
+    }
+
+    if (freshTrackingFrame && expressionCalibratorRef.current.active && !headCalibratorRef.current.active) {
+      const capture = expressionCalibratorRef.current.capture(lastResultRef.current)
+      if (capture.accepted) setExpressionCalibrationProgress(capture.progress)
+      if (capture.phase !== expressionPhaseRef.current) {
+        expressionPhaseRef.current = capture.phase
+        setExpressionPhase(capture.phase)
+        setMessage(expressionInstruction(capture.phase))
+      }
+      if (capture.calibration) {
+        expressionCalibrationRef.current = capture.calibration
+        saveLocalDragonExpressionCalibration(capture.calibration)
+        smoothedPoseRef.current = null
+        setCalibratingExpression(false)
+        setExpressionCalibrated(true)
+        setExpressionQuality(capture.calibration.quality)
+        setExpressionCalibrationProgress(1)
+        setMessage(
+          `Calibración facial lista (${Math.round(capture.calibration.quality * 100)}% de calidad). La máscara ya puede grabar sin reajustarse sola.`,
+        )
       }
     }
 
@@ -279,14 +371,16 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     }
 
     animationFrameRef.current = requestAnimationFrame(renderLoop)
-  }, [])
+  }, [startExpressionCalibration])
 
   const activateCamera = useCallback(async (deviceId?: string) => {
     setStatus('requesting')
     setMessage('Solicitando permiso para usar la cámara…')
     trackerReadyRef.current = false
     headCalibratorRef.current.cancel()
+    expressionCalibratorRef.current.cancel()
     setCalibratingHead(false)
+    setCalibratingExpression(false)
 
     const currentVideo = videoRef.current
     if (currentVideo) currentVideo.onresize = null
@@ -332,8 +426,8 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       const hasAudio = stream.getAudioTracks().length > 0
       setMessage(
         hasAudio
-          ? 'Cámara y micrófono activos. Preparando el análisis inicial de la cabeza…'
-          : 'Cámara activa sin micrófono. Preparando el análisis inicial de la cabeza…',
+          ? 'Cámara y micrófono activos. Preparando el seguimiento local…'
+          : 'Cámara activa sin micrófono. Preparando el seguimiento local…',
       )
 
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
@@ -343,7 +437,11 @@ export function CameraStudio({ userId }: CameraStudioProps) {
         .then(() => {
           trackerReadyRef.current = true
           if (dragonReadyRef.current && useThreeDragonRef.current) {
-            startHeadCalibration()
+            if (!headCalibrationRef.current) startHeadCalibration()
+            else if (!expressionCalibrationRef.current) startExpressionCalibration()
+            else {
+              setMessage('Seguimiento listo con calibración fija de cabeza, boca y ojos.')
+            }
           } else {
             setMessage(
               hasAudio
@@ -362,7 +460,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       setStatus('error')
       setMessage(describeMediaError(caught))
     }
-  }, [renderLoop, startHeadCalibration])
+  }, [renderLoop, startExpressionCalibration, startHeadCalibration])
 
   useEffect(() => {
     return () => {
@@ -391,8 +489,12 @@ export function CameraStudio({ userId }: CameraStudioProps) {
     const canvas = canvasRef.current
     const sourceStream = streamRef.current
     if (!canvas || !sourceStream) return
-    if (dragonInstalled && useThreeDragonRef.current && !headCalibrationRef.current) {
-      setMessage('Termina la calibración frontal antes de comenzar a grabar con el dragón 3D.')
+    if (
+      dragonInstalled
+      && useThreeDragonRef.current
+      && (!headCalibrationRef.current || !expressionCalibrationRef.current)
+    ) {
+      setMessage('Termina las calibraciones de cabeza y rostro antes de grabar con el dragón 3D.')
       return
     }
 
@@ -404,7 +506,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       recordingStartedAtRef.current = Date.now()
       setElapsedMs(0)
       setStatus('recording')
-      setMessage('Grabando localmente. La escala calibrada del dragón permanecerá bloqueada.')
+      setMessage('Grabando localmente con calibración facial fija.')
     } catch (caught) {
       setStatus('error')
       setMessage(caught instanceof Error ? caught.message : 'No fue posible comenzar la grabación.')
@@ -442,18 +544,24 @@ export function CameraStudio({ userId }: CameraStudioProps) {
   async function changeCamera(deviceId: string) {
     setSelectedCamera(deviceId)
     if (status === 'recording' || status === 'finalizing') return
+    expressionCalibrationRef.current = null
+    removeLocalDragonExpressionCalibration()
+    setExpressionCalibrated(false)
+    setExpressionQuality(0)
     await activateCamera(deviceId)
   }
 
   const cameraActive = ['ready', 'recording', 'finalizing'].includes(status)
   const threeDragonActive = dragonInstalled && useThreeDragon
-  const calibrationPercent = Math.round(headCalibrationProgress * 100)
+  const headCalibrationPercent = Math.round(headCalibrationProgress * 100)
+  const expressionCalibrationPercent = Math.round(expressionCalibrationProgress * 100)
+  const readyForRecording = headCalibrated && expressionCalibrated
 
   return (
     <main className="studio-shell">
       <header className="studio-header">
         <div>
-          <p className="eyebrow">FACE CAM · PROTOTIPO 0.3</p>
+          <p className="eyebrow">FACE CAM · PROTOTIPO 0.4</p>
           <h1>Dragón Blanco</h1>
         </div>
         <button className="ghost-button" onClick={() => void supabase.auth.signOut()} type="button">
@@ -476,10 +584,12 @@ export function CameraStudio({ userId }: CameraStudioProps) {
           <div className="stage-overlay">
             <span className={`status-dot ${faceVisible ? 'online' : ''}`} />
             {calibratingHead
-              ? `Calibrando cabeza · ${calibrationPercent}%`
-              : faceVisible
-                ? 'Rostro detectado'
-                : 'Buscando rostro'}
+              ? `Calibrando cabeza · ${headCalibrationPercent}%`
+              : calibratingExpression
+                ? `${expressionPhaseLabel(expressionPhase)} · ${expressionCalibrationPercent}%`
+                : faceVisible
+                  ? 'Rostro detectado'
+                  : 'Buscando rostro'}
           </div>
           {status === 'recording' && (
             <div className="recording-badge"><span /> REC {formatDuration(elapsedMs)} / 30:00</div>
@@ -524,7 +634,8 @@ export function CameraStudio({ userId }: CameraStudioProps) {
                   setUseThreeDragon(event.target.checked)
                   useThreeDragonRef.current = event.target.checked
                   if (event.target.checked && trackerReadyRef.current && streamRef.current) {
-                    startHeadCalibration()
+                    if (!headCalibrationRef.current) startHeadCalibration()
+                    else if (!expressionCalibrationRef.current) startExpressionCalibration()
                   }
                 }}
                 type="checkbox"
@@ -550,9 +661,9 @@ export function CameraStudio({ userId }: CameraStudioProps) {
           <p className="privacy-note">
             <strong>Máscara activa:</strong>{' '}
             {threeDragonActive
-              ? headCalibrated
-                ? 'Dragón 3D con ojos anclados y escala fija; se incluirá en la grabación.'
-                : 'Dragón 3D pendiente de calibración frontal.'
+              ? readyForRecording
+                ? `Dragón 3D estable con calibración facial fija (${Math.round(expressionQuality * 100)}% de calidad).`
+                : 'Dragón 3D pendiente de calibración guiada.'
               : dragonInstalled
                 ? 'Máscara procedural de respaldo. Puedes volver a activar el modelo 3D.'
                 : 'Máscara procedural de respaldo. Instala el GLB desde el laboratorio 3D.'}
@@ -571,11 +682,26 @@ export function CameraStudio({ userId }: CameraStudioProps) {
             {dragonInstalled && cameraActive && status !== 'recording' && status !== 'finalizing' && (
               <button
                 className="ghost-button"
-                disabled={calibratingHead}
+                disabled={calibratingHead || calibratingExpression}
                 onClick={startHeadCalibration}
                 type="button"
               >
-                {calibratingHead ? `Calibrando ${calibrationPercent}%` : 'Calibrar cabeza'}
+                {calibratingHead ? `Calibrando ${headCalibrationPercent}%` : 'Calibrar cabeza'}
+              </button>
+            )}
+
+            {dragonInstalled && cameraActive && headCalibrated && status !== 'recording' && status !== 'finalizing' && (
+              <button
+                className="ghost-button"
+                disabled={calibratingHead || calibratingExpression}
+                onClick={startExpressionCalibration}
+                type="button"
+              >
+                {calibratingExpression
+                  ? `${expressionPhaseLabel(expressionPhase)} ${expressionCalibrationPercent}%`
+                  : expressionCalibrated
+                    ? 'Recalibrar rostro'
+                    : 'Calibrar rostro'}
               </button>
             )}
 
@@ -592,7 +718,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
             {status === 'ready' && (
               <button
                 className="record-button"
-                disabled={threeDragonActive && !headCalibrated}
+                disabled={threeDragonActive && !readyForRecording}
                 onClick={() => void startRecording()}
                 type="button"
               >
@@ -609,7 +735,7 @@ export function CameraStudio({ userId }: CameraStudioProps) {
       </section>
 
       <aside className="privacy-note">
-        <strong>Privacidad local:</strong> los fotogramas, el audio, la forma calibrada de la cabeza, los datos faciales y el GLB permanecen en este dispositivo. Supabase solo conserva tu cuenta y preferencias.
+        <strong>Privacidad local:</strong> los fotogramas, el audio, la forma calibrada de la cabeza, la calibración facial y el GLB permanecen en este dispositivo. Supabase solo conserva tu cuenta y preferencias.
       </aside>
     </main>
   )
