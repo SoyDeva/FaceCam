@@ -15,7 +15,7 @@ on:
       - '.github/workflows/publish-gh-pages-branch.yml'
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '3-58/5 * * * *'
 
 permissions:
   contents: write
