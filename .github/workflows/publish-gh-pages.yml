@@ -1,5 +1,6 @@
 name: Publish GitHub Pages branch
 
+# Keep deployment validation attached to source pushes; do not patch built bundles.
 on:
   push:
     branches: [main]
