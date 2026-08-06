@@ -317,6 +317,7 @@ export function estimateDragonExpression(
     runtimeRightBlink,
     calibratedRightBlink,
   )
+  const blinkEnergy = Math.max(blinkLeft, blinkRight)
 
   // Mouth articulation remains neutral until its personal range has been
   // measured. Eye movement never depends on that calibration.
@@ -357,11 +358,20 @@ export function estimateDragonExpression(
   )
   const mouthClose = score(scores, 'mouthClose')
 
+  // Blinking can produce a false jawOpen spike on some faces/cameras. During
+  // eye closure, the jaw is therefore allowed to move only when the lips show
+  // independent, clearly speech-sized separation. This keeps eye motion from
+  // ever driving the mouth while preserving real speech during a blink.
+  const blinkLipRequirement = 0.26 + blinkEnergy * 0.16
+  const hasConfirmedLipSeparation = lipEvidence >= blinkLipRequirement
+    && metrics.mouthHeight >= calibration.mouthHeightNeutral + heightRange * 0.24
+  const blinkMouthLock = blinkEnergy >= 0.28 && !hasConfirmedLipSeparation
+
   // Closed lips always win over a noisy jawOpen blendshape. This prevents the
   // mouth from talking by itself after an imperfect recalibration.
   const neutralLock = metrics.mouthHeight <= closedLipLimit || mouthClose >= 0.58
   const articulatedJaw = Math.pow(rawJaw, 0.9) * 0.82
-  const jawOpen = neutralLock || rawJaw < 0.1
+  const jawOpen = neutralLock || blinkMouthLock || rawJaw < 0.1
     ? 0
     : clamp(articulatedJaw - (rawJaw < 0.3 ? mouthClose * 0.12 : 0))
 
