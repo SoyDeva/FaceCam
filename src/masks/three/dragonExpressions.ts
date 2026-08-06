@@ -127,6 +127,47 @@ function directGeometryBlinkEvidence(opening: number): number {
   return clamp(Math.pow(closure, 0.72))
 }
 
+function calibratedEyeBlinkEvidence(
+  opening: number,
+  rawBlink: number,
+  openReference: number,
+  closedReference: number,
+  blinkOpenReference: number,
+  blinkClosedReference: number,
+): number | null {
+  const geometryRange = openReference - closedReference
+  const blinkRange = blinkClosedReference - blinkOpenReference
+  if (
+    !Number.isFinite(openReference)
+    || openReference < 0.05
+    || openReference > 0.22
+    || geometryRange < 0.012
+    || blinkRange < 0.18
+  ) {
+    return null
+  }
+
+  const apparentOpenRatio = opening / openReference
+  const nearNeutralBlink = rawBlink <= blinkOpenReference + 0.12
+  if (
+    nearNeutralBlink
+    && opening > 0.045
+    && (apparentOpenRatio < 0.58 || apparentOpenRatio > 1.55)
+  ) {
+    return null
+  }
+
+  const geometry = smoothstep(
+    0.08,
+    0.78,
+    (openReference - opening) / geometryRange,
+  )
+  const compressedBlinkRange = blinkRange * 0.5
+  const normalizedBlink = (rawBlink - blinkOpenReference) / Math.max(0.0001, compressedBlinkRange)
+  const blendshape = smoothstep(0.1, 1, normalizedBlink)
+  return Math.max(geometry, blendshape)
+}
+
 /**
  * Learns each eye's actual open height during the current camera session.
  * Once ready, this signal owns the eyes while the stored mouth calibration
@@ -203,15 +244,15 @@ function maybeResetRuntimeEyesWhenTrackingIsLost(): void {
   }
 }
 
-function provisionalBlink(
+function resolveEyeBlink(
   opening: number,
   directBlink: number,
   runtimeBlink: number | null,
+  calibratedBlink: number | null,
 ): number {
-  return runtimeBlink ?? Math.max(
-    directBlink,
-    directGeometryBlinkEvidence(opening),
-  )
+  return runtimeBlink
+    ?? calibratedBlink
+    ?? Math.max(directBlink, directGeometryBlinkEvidence(opening))
 }
 
 export function estimateDragonExpression(
@@ -244,15 +285,37 @@ export function estimateDragonExpression(
     metrics.rightEyeOpening,
     rawRightBlinkScore,
   )
-  const blinkLeft = provisionalBlink(
+  const calibratedLeftBlink = calibration
+    ? calibratedEyeBlinkEvidence(
+      metrics.leftEyeOpening,
+      metrics.leftBlink,
+      calibration.leftEyeOpen,
+      calibration.leftEyeClosed,
+      calibration.leftBlinkOpen,
+      calibration.leftBlinkClosed,
+    )
+    : null
+  const calibratedRightBlink = calibration
+    ? calibratedEyeBlinkEvidence(
+      metrics.rightEyeOpening,
+      metrics.rightBlink,
+      calibration.rightEyeOpen,
+      calibration.rightEyeClosed,
+      calibration.rightBlinkOpen,
+      calibration.rightBlinkClosed,
+    )
+    : null
+  const blinkLeft = resolveEyeBlink(
     metrics.leftEyeOpening,
     rawLeftBlink,
     runtimeLeftBlink,
+    calibratedLeftBlink,
   )
-  const blinkRight = provisionalBlink(
+  const blinkRight = resolveEyeBlink(
     metrics.rightEyeOpening,
     rawRightBlink,
     runtimeRightBlink,
+    calibratedRightBlink,
   )
 
   // Mouth articulation remains neutral until its personal range has been
