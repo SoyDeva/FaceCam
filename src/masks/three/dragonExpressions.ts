@@ -26,30 +26,18 @@ export const NEUTRAL_DRAGON_EXPRESSION: DragonExpressionState = {
 
 interface RuntimeEyeState {
   openBaseline: number
-  trustworthyOpenSamples: number
   lastOpening: number
   lastSeenAt: number
 }
 
 type RuntimeEyeSide = 'left' | 'right'
 
-const RUNTIME_OPEN_SAMPLE_TARGET = 20
 const RUNTIME_EYE_RESET_MS = 1_500
 const BLINK_MOUTH_INTERLOCK_THRESHOLD = 0.1
 
 const runtimeEyes: Record<RuntimeEyeSide, RuntimeEyeState> = {
-  left: {
-    openBaseline: 0,
-    trustworthyOpenSamples: 0,
-    lastOpening: 0,
-    lastSeenAt: 0,
-  },
-  right: {
-    openBaseline: 0,
-    trustworthyOpenSamples: 0,
-    lastOpening: 0,
-    lastSeenAt: 0,
-  },
+  left: { openBaseline: 0, lastOpening: 0, lastSeenAt: 0 },
+  right: { openBaseline: 0, lastOpening: 0, lastSeenAt: 0 },
 }
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -70,12 +58,7 @@ function nowMs(): number {
 }
 
 function resetRuntimeEye(side: RuntimeEyeSide): void {
-  runtimeEyes[side] = {
-    openBaseline: 0,
-    trustworthyOpenSamples: 0,
-    lastOpening: 0,
-    lastSeenAt: 0,
-  }
+  runtimeEyes[side] = { openBaseline: 0, lastOpening: 0, lastSeenAt: 0 }
 }
 
 export function resetRuntimeDragonEyeTracking(): void {
@@ -104,26 +87,18 @@ function normalizeLinearRange(
   return clamp((normalized - deadZone) / Math.max(0.0001, 1 - deadZone))
 }
 
-/**
- * MediaPipe's eyeBlink channels provide immediate evidence, but some cameras
- * report these values weakly or permanently at zero. Geometry must therefore
- * remain available as an independent path.
- */
 function directBlinkEvidence(rawBlink: number): number {
-  if (!Number.isFinite(rawBlink) || rawBlink <= 0.08) return 0
-  const activated = smoothstep(0.08, 0.52, rawBlink)
-  if (activated < 0.035) return 0
+  if (!Number.isFinite(rawBlink) || rawBlink <= 0.14) return 0
+  const activated = smoothstep(0.14, 0.5, rawBlink)
+  if (activated < 0.02) return 0
   return clamp(Math.pow(activated, 0.52))
 }
 
-/**
- * Absolute geometry is used only while the live per-eye baseline is learning.
- * Its threshold accepts only a clear closure, avoiding the permanent
- * half-closed bias caused by naturally asymmetric open eyes.
- */
+// Conservative first-frame fallback. It only activates for an unmistakably
+// tiny eye opening; ordinary asymmetric open eyes remain neutral.
 function directGeometryBlinkEvidence(opening: number): number {
   if (!Number.isFinite(opening)) return 0
-  const closure = 1 - smoothstep(0.045, 0.095, opening)
+  const closure = 1 - smoothstep(0.04, 0.07, opening)
   if (closure < 0.04) return 0
   return clamp(Math.pow(closure, 0.72))
 }
@@ -140,39 +115,37 @@ function calibratedEyeBlinkEvidence(
   const blinkRange = blinkClosedReference - blinkOpenReference
   if (
     !Number.isFinite(openReference)
-    || openReference < 0.05
-    || openReference > 0.22
-    || geometryRange < 0.012
-    || blinkRange < 0.18
+    || openReference <= 0
+    || geometryRange < Math.max(0.008, openReference * 0.08)
   ) {
     return null
   }
 
-  const apparentOpenRatio = opening / openReference
+  const geometryRatio = opening / openReference
   const nearNeutralBlink = rawBlink <= blinkOpenReference + 0.12
   if (
     nearNeutralBlink
-    && opening > 0.045
-    && (apparentOpenRatio < 0.58 || apparentOpenRatio > 1.55)
+    && opening > 0.04
+    && (geometryRatio < 0.58 || geometryRatio > 1.55)
   ) {
     return null
   }
 
-  const geometry = smoothstep(
-    0.08,
-    0.78,
-    (openReference - opening) / geometryRange,
-  )
-  const compressedBlinkRange = blinkRange * 0.5
-  const normalizedBlink = (rawBlink - blinkOpenReference) / Math.max(0.0001, compressedBlinkRange)
-  const blendshape = smoothstep(0.1, 1, normalizedBlink)
+  const geometry = 1 - smoothstep(0.46, 0.84, geometryRatio)
+  const blendshape = blinkRange >= 0.12
+    ? smoothstep(
+      0.08,
+      0.88,
+      (rawBlink - blinkOpenReference) / Math.max(0.0001, blinkRange),
+    )
+    : 0
   return Math.max(geometry, blendshape)
 }
 
 /**
- * Learns each eye's actual open height during the current camera session.
- * Stored calibration and direct MediaPipe evidence remain independent safety
- * paths so a zero from one detector cannot suppress a real blink from another.
+ * Tracks the largest credible opening for each eye and measures closure as a
+ * ratio of that live baseline. It works after the first open frame and does
+ * not depend on a fixed eye size, a completed calibration, or blendshapes.
  */
 function runtimeEyeBlinkEvidence(
   side: RuntimeEyeSide,
@@ -181,58 +154,47 @@ function runtimeEyeBlinkEvidence(
 ): number | null {
   if (!Number.isFinite(opening) || opening <= 0) return null
 
-  const state = runtimeEyes[side]
   const now = nowMs()
-  if (state.lastSeenAt > 0 && now - state.lastSeenAt > RUNTIME_EYE_RESET_MS) {
+  const previousState = runtimeEyes[side]
+  if (previousState.lastSeenAt > 0 && now - previousState.lastSeenAt > RUNTIME_EYE_RESET_MS) {
     resetRuntimeEye(side)
   }
 
-  const current = runtimeEyes[side]
-  current.lastSeenAt = now
+  const state = runtimeEyes[side]
   const direct = directBlinkEvidence(rawBlink)
-  const previousOpening = current.lastOpening
-  current.lastOpening = opening
+  const previousOpening = state.lastOpening
+  state.lastOpening = opening
+  state.lastSeenAt = now
 
-  const trustworthyOpen = rawBlink < 0.3 && opening > 0.045
-  if (trustworthyOpen) {
-    if (current.openBaseline <= 0) {
-      current.openBaseline = opening
-      current.trustworthyOpenSamples = 1
-    } else if (opening > current.openBaseline) {
-      current.openBaseline = lerp(current.openBaseline, opening, 0.34)
-      current.trustworthyOpenSamples = Math.min(
-        RUNTIME_OPEN_SAMPLE_TARGET,
-        current.trustworthyOpenSamples + 1,
-      )
-    } else if (opening >= current.openBaseline * 0.82) {
-      current.openBaseline = lerp(current.openBaseline, opening, 0.012)
-      current.trustworthyOpenSamples = Math.min(
-        RUNTIME_OPEN_SAMPLE_TARGET,
-        current.trustworthyOpenSamples + 1,
-      )
+  if (state.openBaseline <= 0) {
+    state.openBaseline = opening
+    return direct
+  }
+
+  const baselineBeforeUpdate = Math.max(0.0001, state.openBaseline)
+  const openingRatio = opening / baselineBeforeUpdate
+  const geometry = 1 - smoothstep(0.48, 0.78, openingRatio)
+  const rapidDrop = previousOpening > 0
+    ? clamp((previousOpening - opening) / baselineBeforeUpdate)
+    : 0
+  const temporal = openingRatio < 0.72
+    ? smoothstep(0.12, 0.38, rapidDrop)
+    : 0
+
+  // Only clearly open frames may move the baseline. A closed frame can never
+  // teach the detector that the closed height is the new neutral height.
+  const appearsOpen = direct < 0.18 && openingRatio >= 0.78
+  if (appearsOpen) {
+    if (opening > state.openBaseline) {
+      state.openBaseline = lerp(state.openBaseline, opening, 0.5)
+    } else if (openingRatio >= 0.9) {
+      state.openBaseline = lerp(state.openBaseline, opening, 0.006)
     }
   }
 
-  if (
-    current.trustworthyOpenSamples < RUNTIME_OPEN_SAMPLE_TARGET
-    || current.openBaseline < 0.05
-  ) {
-    return null
-  }
-
-  const openingRatio = opening / current.openBaseline
-  const geometry = 1 - smoothstep(0.38, 0.78, openingRatio)
-  const rapidDrop = previousOpening > 0
-    ? clamp((previousOpening - opening) / current.openBaseline)
-    : 0
-  const decisiveClosure = geometry >= 0.62 || direct >= 0.35 || rapidDrop >= 0.1
-  const candidate = Math.max(
-    direct,
-    decisiveClosure ? geometry : geometry * 0.42,
-  )
-
-  if (candidate < 0.07) return 0
-  return clamp(Math.pow(candidate, 0.7))
+  const candidate = Math.max(direct, geometry, temporal)
+  if (candidate < 0.06) return 0
+  return clamp(Math.pow(candidate, 0.62))
 }
 
 function maybeResetRuntimeEyesWhenTrackingIsLost(): void {
@@ -274,8 +236,8 @@ export function estimateDragonExpression(
     maybeResetRuntimeEyesWhenTrackingIsLost()
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
-      blinkLeft: calibration ? 0 : rawLeftBlink,
-      blinkRight: calibration ? 0 : rawRightBlink,
+      blinkLeft: rawLeftBlink,
+      blinkRight: rawRightBlink,
     }
   }
 
@@ -323,8 +285,6 @@ export function estimateDragonExpression(
   )
   const blinkEnergy = Math.max(blinkLeft, blinkRight)
 
-  // Mouth articulation remains neutral until its personal range has been
-  // measured. Eye movement never depends on that calibration.
   if (!calibration) {
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
@@ -333,9 +293,6 @@ export function estimateDragonExpression(
     }
   }
 
-  // Lip separation is the articulation clock. MediaPipe's jawOpen channel can
-  // remain elevated across a whole sentence, so it only supports the vertical
-  // lip signal instead of taking control through a max().
   const lipEvidence = normalizeLinearRange(
     metrics.mouthHeight,
     calibration.mouthHeightNeutral,
@@ -360,16 +317,7 @@ export function estimateDragonExpression(
     calibration.mouthHeightNeutral + Math.max(0.0024, heightRange * 0.1),
   )
   const mouthClose = score(scores, 'mouthClose')
-
-  // Eye closure has absolute priority over the jaw. A narrow but valid mouth
-  // calibration can amplify the tiny mouth-landmark drift caused by blinking
-  // into a false speech signal. No lip-range heuristic can safely distinguish
-  // that drift on every camera, so the jaw is hard-locked for the blink and the
-  // smoothing stage holds it closed through the release frame.
   const blinkMouthLock = blinkEnergy >= BLINK_MOUTH_INTERLOCK_THRESHOLD
-
-  // Closed lips always win over a noisy jawOpen blendshape. This prevents the
-  // mouth from talking by itself after an imperfect recalibration.
   const neutralLock = metrics.mouthHeight <= closedLipLimit || mouthClose >= 0.58
   const articulatedJaw = Math.pow(rawJaw, 0.9) * 0.82
   const jawOpen = neutralLock || blinkMouthLock || rawJaw < 0.1
@@ -385,8 +333,8 @@ export function estimateDragonExpression(
 
   return {
     jawOpen,
-    blinkLeft: blinkLeft < 0.045 ? 0 : clamp(blinkLeft),
-    blinkRight: blinkRight < 0.045 ? 0 : clamp(blinkRight),
+    blinkLeft: blinkLeft < 0.025 ? 0 : clamp(blinkLeft),
+    blinkRight: blinkRight < 0.025 ? 0 : clamp(blinkRight),
     gazeX: clamp(
       ((lookOutLeft - lookInLeft) + (lookInRight - lookOutRight)) / 2,
       -1,
@@ -417,8 +365,8 @@ function stableJawTarget(previous: number, candidate: number): number {
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.1) return 0
-  if (previous >= 0.035 && candidate < 0.025) return 0
+  if (previous < 0.025 && candidate < 0.055) return 0
+  if (previous >= 0.025 && candidate < 0.018) return 0
   return candidate
 }
 
