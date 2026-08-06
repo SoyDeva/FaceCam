@@ -89,7 +89,7 @@ function normalizeLinearRange(
 
 function directBlinkEvidence(rawBlink: number): number {
   if (!Number.isFinite(rawBlink) || rawBlink <= 0.14) return 0
-  const activated = smoothstep(0.14, 0.5, rawBlink)
+  const activated = smoothstep(0.14, 0.46, rawBlink)
   if (activated < 0.02) return 0
   return clamp(Math.pow(activated, 0.52))
 }
@@ -365,8 +365,8 @@ function stableJawTarget(previous: number, candidate: number): number {
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.025 && candidate < 0.055) return 0
-  if (previous >= 0.025 && candidate < 0.018) return 0
+  if (previous < 0.035 && candidate < 0.1) return 0
+  if (previous >= 0.035 && candidate < 0.025) return 0
   return candidate
 }
 
