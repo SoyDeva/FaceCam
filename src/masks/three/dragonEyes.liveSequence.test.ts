@@ -8,6 +8,7 @@ import {
 } from './dragonExpressions'
 import type { DragonExpressionCalibration } from './expressionCalibration'
 
+// Final verification covers the production controller after legacy jitter fixes.
 function landmark(x: number, y: number, z = 0): NormalizedLandmark {
   return { x, y, z, visibility: 1 }
 }
