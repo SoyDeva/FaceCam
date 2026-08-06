@@ -24,6 +24,33 @@ export const NEUTRAL_DRAGON_EXPRESSION: DragonExpressionState = {
   browRaise: 0,
 }
 
+interface RuntimeEyeState {
+  openBaseline: number
+  trustworthyOpenSamples: number
+  lastOpening: number
+  lastSeenAt: number
+}
+
+type RuntimeEyeSide = 'left' | 'right'
+
+const RUNTIME_OPEN_SAMPLE_TARGET = 20
+const RUNTIME_EYE_RESET_MS = 1_500
+
+const runtimeEyes: Record<RuntimeEyeSide, RuntimeEyeState> = {
+  left: {
+    openBaseline: 0,
+    trustworthyOpenSamples: 0,
+    lastOpening: 0,
+    lastSeenAt: 0,
+  },
+  right: {
+    openBaseline: 0,
+    trustworthyOpenSamples: 0,
+    lastOpening: 0,
+    lastSeenAt: 0,
+  },
+}
+
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -37,6 +64,24 @@ function lerp(previous: number, next: number, alpha: number): number {
   return previous + (next - previous) * alpha
 }
 
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function resetRuntimeEye(side: RuntimeEyeSide): void {
+  runtimeEyes[side] = {
+    openBaseline: 0,
+    trustworthyOpenSamples: 0,
+    lastOpening: 0,
+    lastSeenAt: 0,
+  }
+}
+
+export function resetRuntimeDragonEyeTracking(): void {
+  resetRuntimeEye('left')
+  resetRuntimeEye('right')
+}
+
 function blendshapeMap(result: FaceLandmarkerResult | null): Map<string, number> {
   const categories = result?.faceBlendshapes[0]?.categories ?? []
   return new Map(categories.map((category) => [category.categoryName, clamp(category.score)]))
@@ -44,18 +89,6 @@ function blendshapeMap(result: FaceLandmarkerResult | null): Map<string, number>
 
 function score(scores: Map<string, number>, name: string): number {
   return scores.get(name) ?? 0
-}
-
-function normalizeCalibratedRange(
-  value: number,
-  neutral: number,
-  active: number,
-  deadZone = 0.12,
-): number {
-  const range = active - neutral
-  if (!Number.isFinite(range) || range <= 0.0001) return 0
-  const normalized = (value - neutral) / range
-  return smoothstep(deadZone, 1, normalized)
 }
 
 function normalizeLinearRange(
@@ -70,38 +103,10 @@ function normalizeLinearRange(
   return clamp((normalized - deadZone) / Math.max(0.0001, 1 - deadZone))
 }
 
-function normalizeCompressedRange(
-  value: number,
-  neutral: number,
-  calibratedActive: number,
-  activeScale: number,
-  deadZone: number,
-): number {
-  const range = calibratedActive - neutral
-  if (!Number.isFinite(range) || range <= 0.0001) return 0
-  return normalizeCalibratedRange(
-    value,
-    neutral,
-    neutral + range * activeScale,
-    deadZone,
-  )
-}
-
-function normalizedClosure(
-  opening: number,
-  openValue: number,
-  closedValue: number,
-): number {
-  const range = openValue - closedValue
-  if (!Number.isFinite(range) || range <= 0.006) return 0
-  return smoothstep(0.08, 0.78, (openValue - opening) / range)
-}
-
 /**
- * MediaPipe's eyeBlink channels provide an immediate fallback before the
- * guided per-eye calibration exists. Once calibration is available, its own
- * neutral baseline must take priority so a naturally smaller eye cannot stay
- * permanently half closed.
+ * MediaPipe's eyeBlink channels provide immediate evidence, but some cameras
+ * report these values weakly or permanently at zero. Geometry must therefore
+ * remain available as an independent path.
  */
 function directBlinkEvidence(rawBlink: number): number {
   if (!Number.isFinite(rawBlink) || rawBlink <= 0.08) return 0
@@ -111,9 +116,9 @@ function directBlinkEvidence(rawBlink: number): number {
 }
 
 /**
- * Absolute geometry is used only before calibration and only for an obvious
- * closure. The former 0.145 open threshold classified ordinary asymmetric
- * open eyes as partially closed.
+ * Absolute geometry is used only while the live per-eye baseline is learning.
+ * Its threshold accepts only a clear closure, avoiding the permanent
+ * half-closed bias caused by naturally asymmetric open eyes.
  */
 function directGeometryBlinkEvidence(opening: number): number {
   if (!Number.isFinite(opening)) return 0
@@ -122,16 +127,147 @@ function directGeometryBlinkEvidence(opening: number): number {
   return clamp(Math.pow(closure, 0.72))
 }
 
+function calibratedEyeBlinkEvidence(
+  opening: number,
+  rawBlink: number,
+  openReference: number,
+  closedReference: number,
+  blinkOpenReference: number,
+  blinkClosedReference: number,
+): number | null {
+  const geometryRange = openReference - closedReference
+  const blinkRange = blinkClosedReference - blinkOpenReference
+  if (
+    !Number.isFinite(openReference)
+    || openReference < 0.05
+    || openReference > 0.22
+    || geometryRange < 0.012
+    || blinkRange < 0.18
+  ) {
+    return null
+  }
+
+  const apparentOpenRatio = opening / openReference
+  const nearNeutralBlink = rawBlink <= blinkOpenReference + 0.12
+  if (
+    nearNeutralBlink
+    && opening > 0.045
+    && (apparentOpenRatio < 0.58 || apparentOpenRatio > 1.55)
+  ) {
+    return null
+  }
+
+  const geometry = smoothstep(
+    0.08,
+    0.78,
+    (openReference - opening) / geometryRange,
+  )
+  const compressedBlinkRange = blinkRange * 0.5
+  const normalizedBlink = (rawBlink - blinkOpenReference) / Math.max(0.0001, compressedBlinkRange)
+  const blendshape = smoothstep(0.1, 1, normalizedBlink)
+  return Math.max(geometry, blendshape)
+}
+
+/**
+ * Learns each eye's actual open height during the current camera session.
+ * Once ready, this signal owns the eyes while the stored mouth calibration
+ * remains untouched. Stored eye ranges from older GLBs are never consulted.
+ */
+function runtimeEyeBlinkEvidence(
+  side: RuntimeEyeSide,
+  opening: number,
+  rawBlink: number,
+): number | null {
+  if (!Number.isFinite(opening) || opening <= 0) return null
+
+  const state = runtimeEyes[side]
+  const now = nowMs()
+  if (state.lastSeenAt > 0 && now - state.lastSeenAt > RUNTIME_EYE_RESET_MS) {
+    resetRuntimeEye(side)
+  }
+
+  const current = runtimeEyes[side]
+  current.lastSeenAt = now
+  const direct = directBlinkEvidence(rawBlink)
+  const previousOpening = current.lastOpening
+  current.lastOpening = opening
+
+  const trustworthyOpen = rawBlink < 0.3 && opening > 0.045
+  if (trustworthyOpen) {
+    if (current.openBaseline <= 0) {
+      current.openBaseline = opening
+      current.trustworthyOpenSamples = 1
+    } else if (opening > current.openBaseline) {
+      current.openBaseline = lerp(current.openBaseline, opening, 0.34)
+      current.trustworthyOpenSamples = Math.min(
+        RUNTIME_OPEN_SAMPLE_TARGET,
+        current.trustworthyOpenSamples + 1,
+      )
+    } else if (opening >= current.openBaseline * 0.82) {
+      current.openBaseline = lerp(current.openBaseline, opening, 0.012)
+      current.trustworthyOpenSamples = Math.min(
+        RUNTIME_OPEN_SAMPLE_TARGET,
+        current.trustworthyOpenSamples + 1,
+      )
+    }
+  }
+
+  if (
+    current.trustworthyOpenSamples < RUNTIME_OPEN_SAMPLE_TARGET
+    || current.openBaseline < 0.05
+  ) {
+    return null
+  }
+
+  const openingRatio = opening / current.openBaseline
+  const geometry = 1 - smoothstep(0.38, 0.78, openingRatio)
+  const rapidDrop = previousOpening > 0
+    ? clamp((previousOpening - opening) / current.openBaseline)
+    : 0
+  const decisiveClosure = geometry >= 0.62 || direct >= 0.35 || rapidDrop >= 0.1
+  const candidate = Math.max(
+    direct,
+    decisiveClosure ? geometry : geometry * 0.42,
+  )
+
+  if (candidate < 0.07) return 0
+  return clamp(Math.pow(candidate, 0.7))
+}
+
+function maybeResetRuntimeEyesWhenTrackingIsLost(): void {
+  const now = nowMs()
+  for (const side of ['left', 'right'] as const) {
+    const state = runtimeEyes[side]
+    if (state.lastSeenAt > 0 && now - state.lastSeenAt > RUNTIME_EYE_RESET_MS) {
+      resetRuntimeEye(side)
+    }
+  }
+}
+
+function resolveEyeBlink(
+  opening: number,
+  directBlink: number,
+  runtimeBlink: number | null,
+  calibratedBlink: number | null,
+): number {
+  return runtimeBlink
+    ?? calibratedBlink
+    ?? Math.max(directBlink, directGeometryBlinkEvidence(opening))
+}
+
 export function estimateDragonExpression(
   result: FaceLandmarkerResult | null,
   calibration: DragonExpressionCalibration | null = null,
 ): DragonExpressionState {
   const scores = blendshapeMap(result)
   const metrics = extractDragonExpressionMetrics(result)
-  const rawLeftBlink = directBlinkEvidence(score(scores, 'eyeBlinkLeft'))
-  const rawRightBlink = directBlinkEvidence(score(scores, 'eyeBlinkRight'))
+  const rawLeftBlinkScore = score(scores, 'eyeBlinkLeft')
+  const rawRightBlinkScore = score(scores, 'eyeBlinkRight')
+  const rawLeftBlink = directBlinkEvidence(rawLeftBlinkScore)
+  const rawRightBlink = directBlinkEvidence(rawRightBlinkScore)
 
   if (!metrics) {
+    maybeResetRuntimeEyesWhenTrackingIsLost()
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
       blinkLeft: calibration ? 0 : rawLeftBlink,
@@ -139,20 +275,56 @@ export function estimateDragonExpression(
     }
   }
 
-  // Before calibration, accept only decisive geometry or the direct
-  // MediaPipe channel. Mouth articulation remains neutral until its personal
-  // range has been measured.
+  const runtimeLeftBlink = runtimeEyeBlinkEvidence(
+    'left',
+    metrics.leftEyeOpening,
+    rawLeftBlinkScore,
+  )
+  const runtimeRightBlink = runtimeEyeBlinkEvidence(
+    'right',
+    metrics.rightEyeOpening,
+    rawRightBlinkScore,
+  )
+  const calibratedLeftBlink = calibration
+    ? calibratedEyeBlinkEvidence(
+      metrics.leftEyeOpening,
+      metrics.leftBlink,
+      calibration.leftEyeOpen,
+      calibration.leftEyeClosed,
+      calibration.leftBlinkOpen,
+      calibration.leftBlinkClosed,
+    )
+    : null
+  const calibratedRightBlink = calibration
+    ? calibratedEyeBlinkEvidence(
+      metrics.rightEyeOpening,
+      metrics.rightBlink,
+      calibration.rightEyeOpen,
+      calibration.rightEyeClosed,
+      calibration.rightBlinkOpen,
+      calibration.rightBlinkClosed,
+    )
+    : null
+  const blinkLeft = resolveEyeBlink(
+    metrics.leftEyeOpening,
+    rawLeftBlink,
+    runtimeLeftBlink,
+    calibratedLeftBlink,
+  )
+  const blinkRight = resolveEyeBlink(
+    metrics.rightEyeOpening,
+    rawRightBlink,
+    runtimeRightBlink,
+    calibratedRightBlink,
+  )
+
+  // Mouth articulation remains neutral until its personal range has been
+  // measured. Eye movement never depends on that calibration.
   if (!calibration) {
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
-      blinkLeft: Math.max(
-        rawLeftBlink,
-        directGeometryBlinkEvidence(metrics.leftEyeOpening),
-      ),
-      blinkRight: Math.max(
-        rawRightBlink,
-        directGeometryBlinkEvidence(metrics.rightEyeOpening),
-      ),
+      blinkLeft,
+      blinkRight,
     }
   }
 
@@ -192,37 +364,6 @@ export function estimateDragonExpression(
   const jawOpen = neutralLock || rawJaw < 0.1
     ? 0
     : clamp(articulatedJaw - (rawJaw < 0.3 ? mouthClose * 0.12 : 0))
-
-  // Each calibrated eye uses only its own open/closed range and blendshape
-  // baseline. Absolute fallbacks are deliberately excluded here to avoid the
-  // left/right neutral bias observed with the v6 release.
-  const leftBlinkGeometry = normalizedClosure(
-    metrics.leftEyeOpening,
-    calibration.leftEyeOpen,
-    calibration.leftEyeClosed,
-  )
-  const rightBlinkGeometry = normalizedClosure(
-    metrics.rightEyeOpening,
-    calibration.rightEyeOpen,
-    calibration.rightEyeClosed,
-  )
-  const leftBlinkScore = normalizeCompressedRange(
-    metrics.leftBlink,
-    calibration.leftBlinkOpen,
-    calibration.leftBlinkClosed,
-    0.5,
-    0.1,
-  )
-  const rightBlinkScore = normalizeCompressedRange(
-    metrics.rightBlink,
-    calibration.rightBlinkOpen,
-    calibration.rightBlinkClosed,
-    0.5,
-    0.1,
-  )
-
-  const blinkLeft = Math.max(leftBlinkGeometry, leftBlinkScore)
-  const blinkRight = Math.max(rightBlinkGeometry, rightBlinkScore)
 
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
