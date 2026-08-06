@@ -88,10 +88,19 @@ function normalizeLinearRange(
 }
 
 function directBlinkEvidence(rawBlink: number): number {
-  if (!Number.isFinite(rawBlink) || rawBlink <= 0.06) return 0
-  const activated = smoothstep(0.06, 0.5, rawBlink)
+  if (!Number.isFinite(rawBlink) || rawBlink <= 0.14) return 0
+  const activated = smoothstep(0.14, 0.5, rawBlink)
   if (activated < 0.02) return 0
   return clamp(Math.pow(activated, 0.52))
+}
+
+// Conservative first-frame fallback. It only activates for an unmistakably
+// tiny eye opening; ordinary asymmetric open eyes remain neutral.
+function directGeometryBlinkEvidence(opening: number): number {
+  if (!Number.isFinite(opening)) return 0
+  const closure = 1 - smoothstep(0.04, 0.07, opening)
+  if (closure < 0.04) return 0
+  return clamp(Math.pow(closure, 0.72))
 }
 
 function calibratedEyeBlinkEvidence(
@@ -113,6 +122,15 @@ function calibratedEyeBlinkEvidence(
   }
 
   const geometryRatio = opening / openReference
+  const nearNeutralBlink = rawBlink <= blinkOpenReference + 0.12
+  if (
+    nearNeutralBlink
+    && opening > 0.04
+    && (geometryRatio < 0.58 || geometryRatio > 1.55)
+  ) {
+    return null
+  }
+
   const geometry = 1 - smoothstep(0.46, 0.84, geometryRatio)
   const blendshape = blinkRange >= 0.12
     ? smoothstep(
@@ -190,11 +208,17 @@ function maybeResetRuntimeEyesWhenTrackingIsLost(): void {
 }
 
 function resolveEyeBlink(
+  opening: number,
   directBlink: number,
   runtimeBlink: number | null,
   calibratedBlink: number | null,
 ): number {
-  return Math.max(directBlink, runtimeBlink ?? 0, calibratedBlink ?? 0)
+  return Math.max(
+    directBlink,
+    directGeometryBlinkEvidence(opening),
+    runtimeBlink ?? 0,
+    calibratedBlink ?? 0,
+  )
 }
 
 export function estimateDragonExpression(
@@ -247,8 +271,18 @@ export function estimateDragonExpression(
       calibration.rightBlinkClosed,
     )
     : null
-  const blinkLeft = resolveEyeBlink(rawLeftBlink, runtimeLeftBlink, calibratedLeftBlink)
-  const blinkRight = resolveEyeBlink(rawRightBlink, runtimeRightBlink, calibratedRightBlink)
+  const blinkLeft = resolveEyeBlink(
+    metrics.leftEyeOpening,
+    rawLeftBlink,
+    runtimeLeftBlink,
+    calibratedLeftBlink,
+  )
+  const blinkRight = resolveEyeBlink(
+    metrics.rightEyeOpening,
+    rawRightBlink,
+    runtimeRightBlink,
+    calibratedRightBlink,
+  )
   const blinkEnergy = Math.max(blinkLeft, blinkRight)
 
   if (!calibration) {
