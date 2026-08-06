@@ -1,0 +1,41 @@
+name: Stop blink mouth cross-talk
+
+on:
+  push:
+    branches:
+      - agent/stop-blink-mouth-crosstalk
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/stop-blink-mouth-crosstalk
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply blink mouth isolation
+        run: node scripts/stop-blink-mouth-crosstalk.mjs
+      - name: Install dependencies
+        run: npm install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Validate dragon
+        run: npm run validate:dragon
+      - name: Build
+        run: npm run build
+      - name: Commit validated fix
+        run: |
+          rm -f package-lock.json
+          git config user.name "Danilo Olarte González"
+          git config user.email "aprendevata@gmail.com"
+          git add src/masks/three/dragonExpressions.ts src/masks/three/dragonExpressions.test.ts
+          git commit -m "Prevent blink signals from opening dragon mouth"
+          git push origin agent/stop-blink-mouth-crosstalk
