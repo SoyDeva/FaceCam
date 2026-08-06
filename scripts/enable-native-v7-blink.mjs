@@ -104,7 +104,7 @@ replaceExact(
 fs.writeFileSync(rendererPath, source)
 
 const testPath = 'src/masks/three/nativeBlinkWiring.test.ts'
-fs.writeFileSync(testPath, `import fs from 'node:fs'\nimport { describe, expect, it } from 'vitest'\n\ndescribe('native v7 blink wiring', () => {\n  it('writes both eye signals directly to the GLB morph targets', () => {\n    const source = fs.readFileSync('src/masks/three/StaticDragonRenderer.ts', 'utf8')\n    expect(source).toContain("this.hasNativeBlink = this.hasMorph('blinkLeft') && this.hasMorph('blinkRight')")\n    expect(source).toContain("this.setMorph(binding, 'blinkLeft', expression.blinkLeft)")\n    expect(source).toContain("this.setMorph(binding, 'blinkRight', expression.blinkRight)")\n    expect(source).not.toContain('applyDragonMeshEyelidRig')\n    expect(source).not.toContain('createDragonMeshEyelidRig')\n  })\n})\n`)
+fs.writeFileSync(testPath, `// @ts-nocheck\nimport fs from 'node:fs'\nimport { describe, expect, it } from 'vitest'\n\ndescribe('native v7 blink wiring', () => {\n  it('writes both eye signals directly to the GLB morph targets', () => {\n    const source = fs.readFileSync('src/masks/three/StaticDragonRenderer.ts', 'utf8')\n    expect(source).toContain("this.hasNativeBlink = this.hasMorph('blinkLeft') && this.hasMorph('blinkRight')")\n    expect(source).toContain("this.setMorph(binding, 'blinkLeft', expression.blinkLeft)")\n    expect(source).toContain("this.setMorph(binding, 'blinkRight', expression.blinkRight)")\n    expect(source).not.toContain('applyDragonMeshEyelidRig')\n    expect(source).not.toContain('createDragonMeshEyelidRig')\n  })\n})\n`)
 
 for (const path of [workflowPath, 'scripts/enable-native-v7-blink.mjs']) {
   if (fs.existsSync(path)) fs.unlinkSync(path)
