@@ -161,6 +161,26 @@ describe('estimateDragonExpression', () => {
     expect(expression.blinkLeft).toBeGreaterThan(0.5)
     expect(expression.blinkRight).toBeGreaterThan(0.5)
   })
+
+  it('keeps the mouth closed when a blink produces a false jaw spike', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.95, 0.018, 0.035, 0.9),
+      calibration,
+    )
+    expect(expression.blinkLeft).toBeGreaterThan(0.8)
+    expect(expression.blinkRight).toBeGreaterThan(0.8)
+    expect(expression.jawOpen).toBe(0)
+  })
+
+  it('still permits real speech during a blink when lips are clearly separated', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.14, 0.03, 0.035, 0.9),
+      calibration,
+    )
+    expect(expression.blinkLeft).toBeGreaterThan(0.8)
+    expect(expression.blinkRight).toBeGreaterThan(0.8)
+    expect(expression.jawOpen).toBeGreaterThan(0.45)
+  })
 })
 
 describe('smoothDragonExpression', () => {
