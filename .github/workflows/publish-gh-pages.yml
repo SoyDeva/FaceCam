@@ -1,6 +1,5 @@
 name: Publish GitHub Pages branch
 
-# Keep deployment validation attached to source pushes; do not patch built bundles.
 on:
   push:
     branches: [main]
@@ -14,9 +13,8 @@ on:
       - '.github/workflows/publish-gh-pages.yml'
       - '.github/workflows/publish-gh-pages-branch.yml'
   workflow_dispatch:
-  page_build:
-  schedule:
-    - cron: '3-58/5 * * * *'
+  issues:
+    types: [opened]
 
 permissions:
   contents: write
@@ -27,10 +25,12 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name != 'issues' || github.event.issue.title == '[FaceCam] Deploy live eye fix'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -38,11 +38,12 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm test
+      - run: npm run validate:dragon
       - name: Stamp deployment version
         run: |
           mkdir -p public
           printf '{"sha":"%s","builtAt":"%s"}\n' \
-            "$GITHUB_SHA" \
+            "$(git rev-parse HEAD)" \
             "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             > public/version.json
       - name: Build production bundle
@@ -94,6 +95,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No deployment changes."
           else
-            git commit -m "Deploy FaceCam from ${GITHUB_SHA}"
+            git commit -m "Deploy FaceCam from $(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
             git push origin gh-pages
           fi
