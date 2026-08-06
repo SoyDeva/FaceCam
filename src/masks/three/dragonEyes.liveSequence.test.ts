@@ -8,7 +8,7 @@ import {
 } from './dragonExpressions'
 import type { DragonExpressionCalibration } from './expressionCalibration'
 
-// Source-only verification trigger for the final live per-eye controller.
+// Source-only merge trigger for the final live per-eye controller deployment.
 function landmark(x: number, y: number, z = 0): NormalizedLandmark {
   return { x, y, z, visibility: 1 }
 }
