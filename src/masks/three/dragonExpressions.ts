@@ -35,6 +35,7 @@ type RuntimeEyeSide = 'left' | 'right'
 
 const RUNTIME_OPEN_SAMPLE_TARGET = 20
 const RUNTIME_EYE_RESET_MS = 1_500
+const BLINK_MOUTH_INTERLOCK_THRESHOLD = 0.1
 
 const runtimeEyes: Record<RuntimeEyeSide, RuntimeEyeState> = {
   left: {
@@ -170,8 +171,8 @@ function calibratedEyeBlinkEvidence(
 
 /**
  * Learns each eye's actual open height during the current camera session.
- * Once ready, this signal owns the eyes while the stored mouth calibration
- * remains untouched. Stored eye ranges from older GLBs are never consulted.
+ * Stored calibration and direct MediaPipe evidence remain independent safety
+ * paths so a zero from one detector cannot suppress a real blink from another.
  */
 function runtimeEyeBlinkEvidence(
   side: RuntimeEyeSide,
@@ -250,9 +251,12 @@ function resolveEyeBlink(
   runtimeBlink: number | null,
   calibratedBlink: number | null,
 ): number {
-  return runtimeBlink
-    ?? calibratedBlink
-    ?? Math.max(directBlink, directGeometryBlinkEvidence(opening))
+  return Math.max(
+    directBlink,
+    directGeometryBlinkEvidence(opening),
+    runtimeBlink ?? 0,
+    calibratedBlink ?? 0,
+  )
 }
 
 export function estimateDragonExpression(
@@ -331,8 +335,7 @@ export function estimateDragonExpression(
 
   // Lip separation is the articulation clock. MediaPipe's jawOpen channel can
   // remain elevated across a whole sentence, so it only supports the vertical
-  // lip signal instead of taking control through a max(). This is the approved
-  // mouth architecture from PR #26.
+  // lip signal instead of taking control through a max().
   const lipEvidence = normalizeLinearRange(
     metrics.mouthHeight,
     calibration.mouthHeightNeutral,
@@ -358,14 +361,12 @@ export function estimateDragonExpression(
   )
   const mouthClose = score(scores, 'mouthClose')
 
-  // Blinking can produce a false jawOpen spike on some faces/cameras. During
-  // eye closure, the jaw is therefore allowed to move only when the lips show
-  // independent, clearly speech-sized separation. This keeps eye motion from
-  // ever driving the mouth while preserving real speech during a blink.
-  const blinkLipRequirement = 0.26 + blinkEnergy * 0.16
-  const hasConfirmedLipSeparation = lipEvidence >= blinkLipRequirement
-    && metrics.mouthHeight >= calibration.mouthHeightNeutral + heightRange * 0.24
-  const blinkMouthLock = blinkEnergy >= 0.28 && !hasConfirmedLipSeparation
+  // Eye closure has absolute priority over the jaw. A narrow but valid mouth
+  // calibration can amplify the tiny mouth-landmark drift caused by blinking
+  // into a false speech signal. No lip-range heuristic can safely distinguish
+  // that drift on every camera, so the jaw is hard-locked for the blink and the
+  // smoothing stage holds it closed through the release frame.
+  const blinkMouthLock = blinkEnergy >= BLINK_MOUTH_INTERLOCK_THRESHOLD
 
   // Closed lips always win over a noisy jawOpen blendshape. This prevents the
   // mouth from talking by itself after an imperfect recalibration.
@@ -427,12 +428,22 @@ export function smoothDragonExpression(
   alpha = 0.38,
 ): DragonExpressionState {
   const amount = clamp(alpha)
-  const jawTarget = stableJawTarget(previous.jawOpen, next.jawOpen)
+  const blinkMouthInterlock = Math.max(
+    previous.blinkLeft,
+    previous.blinkRight,
+    next.blinkLeft,
+    next.blinkRight,
+  ) >= BLINK_MOUTH_INTERLOCK_THRESHOLD
+  const jawTarget = blinkMouthInterlock
+    ? 0
+    : stableJawTarget(previous.jawOpen, next.jawOpen)
   const leftBlinkTarget = stableBlinkTarget(previous.blinkLeft, next.blinkLeft)
   const rightBlinkTarget = stableBlinkTarget(previous.blinkRight, next.blinkRight)
 
   return {
-    jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.72 : 0.78),
+    jawOpen: blinkMouthInterlock
+      ? 0
+      : lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.72 : 0.78),
     blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.99 : 0.9),
     blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.99 : 0.9),
     gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
