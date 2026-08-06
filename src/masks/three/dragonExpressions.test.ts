@@ -1,8 +1,9 @@
 import type { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   estimateDragonExpression,
   NEUTRAL_DRAGON_EXPRESSION,
+  resetRuntimeDragonEyeTracking,
   smoothDragonExpression,
 } from './dragonExpressions'
 import type { DragonExpressionCalibration } from './expressionCalibration'
@@ -83,7 +84,14 @@ const calibration: DragonExpressionCalibration = {
   capturedAt: 1,
 }
 
+const narrowMouthCalibration: DragonExpressionCalibration = {
+  ...calibration,
+  mouthHeightSpeech: 0.03,
+}
+
 describe('estimateDragonExpression', () => {
+  beforeEach(() => resetRuntimeDragonEyeTracking())
+
   it('drives both eye morphs before guided calibration exists', () => {
     const expression = estimateDragonExpression(
       resultFor(0.12, 0.03, 0.14, 0.42),
@@ -172,18 +180,30 @@ describe('estimateDragonExpression', () => {
     expect(expression.jawOpen).toBe(0)
   })
 
-  it('still permits real speech during a blink when lips are clearly separated', () => {
+  it('does not let a narrow valid mouth range turn blink drift into speech', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.95, 0.0174, 0.035, 0.9),
+      narrowMouthCalibration,
+    )
+    expect(expression.blinkLeft).toBeGreaterThan(0.8)
+    expect(expression.blinkRight).toBeGreaterThan(0.8)
+    expect(expression.jawOpen).toBe(0)
+  })
+
+  it('gives eye closure priority over the jaw even while the lips are separated', () => {
     const expression = estimateDragonExpression(
       resultFor(0.14, 0.03, 0.035, 0.9),
       calibration,
     )
     expect(expression.blinkLeft).toBeGreaterThan(0.8)
     expect(expression.blinkRight).toBeGreaterThan(0.8)
-    expect(expression.jawOpen).toBeGreaterThan(0.45)
+    expect(expression.jawOpen).toBe(0)
   })
 })
 
 describe('smoothDragonExpression', () => {
+  beforeEach(() => resetRuntimeDragonEyeTracking())
+
   it('rejects weak neutral jitter', () => {
     const next = { ...NEUTRAL_DRAGON_EXPRESSION, jawOpen: 0.08, blinkLeft: 0.06 }
     expect(smoothDragonExpression(NEUTRAL_DRAGON_EXPRESSION, next)).toEqual(NEUTRAL_DRAGON_EXPRESSION)
@@ -209,5 +229,25 @@ describe('smoothDragonExpression', () => {
     )
     expect(blink.blinkLeft).toBeGreaterThan(0.17)
     expect(blink.blinkRight).toBeGreaterThan(0.17)
+  })
+
+  it('keeps the jaw at zero through blink onset, closure and release', () => {
+    const frames = [
+      resultFor(0.04, 0.012, 0.14, 0.03),
+      resultFor(0.8, 0.0174, 0.09, 0.22),
+      resultFor(0.95, 0.0174, 0.035, 0.9),
+      resultFor(0.7, 0.015, 0.09, 0.2),
+      resultFor(0.04, 0.012, 0.14, 0.03),
+    ]
+
+    let smoothed = { ...NEUTRAL_DRAGON_EXPRESSION }
+    const jawFrames: number[] = []
+    for (const frame of frames) {
+      const estimated = estimateDragonExpression(frame, narrowMouthCalibration)
+      smoothed = smoothDragonExpression(smoothed, estimated)
+      jawFrames.push(smoothed.jawOpen)
+    }
+
+    expect(jawFrames.slice(1)).toEqual([0, 0, 0, 0])
   })
 })
