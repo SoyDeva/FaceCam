@@ -91,18 +91,6 @@ function score(scores: Map<string, number>, name: string): number {
   return scores.get(name) ?? 0
 }
 
-function normalizeCalibratedRange(
-  value: number,
-  neutral: number,
-  active: number,
-  deadZone = 0.12,
-): number {
-  const range = active - neutral
-  if (!Number.isFinite(range) || range <= 0.0001) return 0
-  const normalized = (value - neutral) / range
-  return smoothstep(deadZone, 1, normalized)
-}
-
 function normalizeLinearRange(
   value: number,
   neutral: number,
@@ -113,33 +101,6 @@ function normalizeLinearRange(
   if (!Number.isFinite(range) || range <= 0.0001) return 0
   const normalized = (value - neutral) / range
   return clamp((normalized - deadZone) / Math.max(0.0001, 1 - deadZone))
-}
-
-function normalizeCompressedRange(
-  value: number,
-  neutral: number,
-  calibratedActive: number,
-  activeScale: number,
-  deadZone: number,
-): number {
-  const range = calibratedActive - neutral
-  if (!Number.isFinite(range) || range <= 0.0001) return 0
-  return normalizeCalibratedRange(
-    value,
-    neutral,
-    neutral + range * activeScale,
-    deadZone,
-  )
-}
-
-function normalizedClosure(
-  opening: number,
-  openValue: number,
-  closedValue: number,
-): number {
-  const range = openValue - closedValue
-  if (!Number.isFinite(range) || range <= 0.006) return 0
-  return smoothstep(0.08, 0.78, (openValue - opening) / range)
 }
 
 /**
@@ -168,8 +129,8 @@ function directGeometryBlinkEvidence(opening: number): number {
 
 /**
  * Learns each eye's actual open height during the current camera session.
- * Once ready, this signal replaces stored eye ranges while leaving the stored
- * mouth calibration untouched. This makes old GLB eye calibrations harmless.
+ * Once ready, this signal owns the eyes while the stored mouth calibration
+ * remains untouched. Stored eye ranges from older GLBs are never consulted.
  */
 function runtimeEyeBlinkEvidence(
   side: RuntimeEyeSide,
@@ -242,6 +203,17 @@ function maybeResetRuntimeEyesWhenTrackingIsLost(): void {
   }
 }
 
+function provisionalBlink(
+  opening: number,
+  directBlink: number,
+  runtimeBlink: number | null,
+): number {
+  return runtimeBlink ?? Math.max(
+    directBlink,
+    directGeometryBlinkEvidence(opening),
+  )
+}
+
 export function estimateDragonExpression(
   result: FaceLandmarkerResult | null,
   calibration: DragonExpressionCalibration | null = null,
@@ -272,21 +244,24 @@ export function estimateDragonExpression(
     metrics.rightEyeOpening,
     rawRightBlinkScore,
   )
+  const blinkLeft = provisionalBlink(
+    metrics.leftEyeOpening,
+    rawLeftBlink,
+    runtimeLeftBlink,
+  )
+  const blinkRight = provisionalBlink(
+    metrics.rightEyeOpening,
+    rawRightBlink,
+    runtimeRightBlink,
+  )
 
-  // Before the session baselines are ready, accept only decisive geometry or
-  // the direct MediaPipe channel. Mouth articulation remains neutral until its
-  // personal range has been measured.
+  // Mouth articulation remains neutral until its personal range has been
+  // measured. Eye movement never depends on that calibration.
   if (!calibration) {
     return {
       ...NEUTRAL_DRAGON_EXPRESSION,
-      blinkLeft: runtimeLeftBlink ?? Math.max(
-        rawLeftBlink,
-        directGeometryBlinkEvidence(metrics.leftEyeOpening),
-      ),
-      blinkRight: runtimeRightBlink ?? Math.max(
-        rawRightBlink,
-        directGeometryBlinkEvidence(metrics.rightEyeOpening),
-      ),
+      blinkLeft,
+      blinkRight,
     }
   }
 
@@ -326,36 +301,6 @@ export function estimateDragonExpression(
   const jawOpen = neutralLock || rawJaw < 0.1
     ? 0
     : clamp(articulatedJaw - (rawJaw < 0.3 ? mouthClose * 0.12 : 0))
-
-  const leftBlinkGeometry = normalizedClosure(
-    metrics.leftEyeOpening,
-    calibration.leftEyeOpen,
-    calibration.leftEyeClosed,
-  )
-  const rightBlinkGeometry = normalizedClosure(
-    metrics.rightEyeOpening,
-    calibration.rightEyeOpen,
-    calibration.rightEyeClosed,
-  )
-  const leftBlinkScore = normalizeCompressedRange(
-    metrics.leftBlink,
-    calibration.leftBlinkOpen,
-    calibration.leftBlinkClosed,
-    0.5,
-    0.1,
-  )
-  const rightBlinkScore = normalizeCompressedRange(
-    metrics.rightBlink,
-    calibration.rightBlinkOpen,
-    calibration.rightBlinkClosed,
-    0.5,
-    0.1,
-  )
-
-  // A ready session baseline owns the eyes completely. Stored eye ranges may
-  // belong to an older GLB, but stored mouth ranges remain valid and untouched.
-  const blinkLeft = runtimeLeftBlink ?? Math.max(leftBlinkGeometry, leftBlinkScore)
-  const blinkRight = runtimeRightBlink ?? Math.max(rightBlinkGeometry, rightBlinkScore)
 
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
