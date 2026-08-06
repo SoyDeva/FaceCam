@@ -111,4 +111,17 @@ describe('live per-eye blink baselines', () => {
     expect(wink.blinkLeft).toBeGreaterThan(0.85)
     expect(wink.blinkRight).toBe(0)
   })
+
+  it('does not let a learned zero suppress direct blink evidence', () => {
+    for (let frame = 0; frame < 20; frame += 1) {
+      estimateDragonExpression(resultWithEyes(0.13, 0.105), staleCalibration)
+    }
+
+    const blink = estimateDragonExpression(
+      resultWithEyes(0.13, 0.105, 0.5, 0.5),
+      staleCalibration,
+    )
+    expect(blink.blinkLeft).toBeGreaterThan(0.9)
+    expect(blink.blinkRight).toBeGreaterThan(0.9)
+  })
 })
