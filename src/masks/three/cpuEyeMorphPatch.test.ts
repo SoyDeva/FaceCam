@@ -25,6 +25,14 @@ function riggedMesh(): Mesh {
   return mesh
 }
 
+function expectPosition(position: Float32BufferAttribute, expected: readonly number[]): void {
+  const actual = Array.from(position.array)
+  expect(actual).toHaveLength(expected.length)
+  actual.forEach((value, index) => {
+    expect(value).toBeCloseTo(expected[index], 5)
+  })
+}
+
 describe('CPU eyelid compatibility path', () => {
   it('applies the authored left and right deltas independently and restores neutral', () => {
     const root = new Object3D()
@@ -36,19 +44,19 @@ describe('CPU eyelid compatibility path', () => {
     expect(bindings).toHaveLength(1)
 
     applyCpuEyeBlink(bindings, 1, 0)
-    expect(Array.from(position.array)).toEqual([
+    expectPosition(position, [
       -1, 1.5, 3.1,
       1, 2, 3,
     ])
 
     applyCpuEyeBlink(bindings, 0, 1)
-    expect(Array.from(position.array)).toEqual([
+    expectPosition(position, [
       -1, 2, 3,
       1, 1.6, 3.1,
     ])
 
     applyCpuEyeBlink(bindings, 0, 0)
-    expect(Array.from(position.array)).toEqual([
+    expectPosition(position, [
       -1, 2, 3,
       1, 2, 3,
     ])
