@@ -19,6 +19,8 @@ interface EyeUniform {
 export interface EyeShaderBinding {
   leftUniform: EyeUniform
   rightUniform: EyeUniform
+  leftGain: number
+  rightGain: number
 }
 
 interface RendererInternals {
@@ -42,6 +44,8 @@ export interface EyeShaderDebugState {
   compiledPrograms: number
   lastLeft: number
   lastRight: number
+  leftGain: number
+  rightGain: number
   buildSha: string
 }
 
@@ -52,13 +56,23 @@ const debugState: EyeShaderDebugState = {
   compiledPrograms: 0,
   lastLeft: 0,
   lastRight: 0,
+  leftGain: 1,
+  rightGain: 1,
   buildSha: import.meta.env.VITE_FACECAM_BUILD_SHA ?? 'dev',
 }
 let installed = false
 
+const MOTION_EPSILON = 1e-6
+const MAX_AUTHORED_BLINK_GAIN = 3.25
+const CLOSURE_MARGIN = 1.08
+
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.min(1, Math.max(0, value))
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
 }
 
 function findMorphIndex(dictionary: Record<string, number>, names: readonly string[]): number | undefined {
@@ -103,9 +117,91 @@ function zeroDelta(count: number): Float32Array {
   return new Float32Array(count * 3)
 }
 
+/**
+ * The v7 blink targets point in the correct anatomical direction but their
+ * authored 1.0 amplitude does not cover the visible eyeball. Derive the extra
+ * amplitude from the target itself instead of guessing eye coordinates:
+ * - vertices moving downward represent the upper closing surface;
+ * - vertices moving upward represent the lower closing surface;
+ * - solve the gain at which those weighted surfaces meet;
+ * - cross-check it against the vertical span/travel of the authored target.
+ *
+ * The result is deliberately capped. We only amplify vertices already present
+ * in the official eye morph; no cheek, snout or jaw vertices are selected here.
+ */
+export function estimateBlinkClosureGain(base: BufferAttribute, delta: Float32Array): number {
+  if (base.itemSize < 3 || delta.length < base.count * 3) return 1
+
+  let downwardWeight = 0
+  let downwardY = 0
+  let downwardDy = 0
+  let upwardWeight = 0
+  let upwardY = 0
+  let upwardDy = 0
+  let movedMinY = Number.POSITIVE_INFINITY
+  let movedMaxY = Number.NEGATIVE_INFINITY
+  let maxVerticalTravel = 0
+  let movedVertices = 0
+
+  for (let vertex = 0; vertex < base.count; vertex += 1) {
+    const offset = vertex * 3
+    const dx = delta[offset]
+    const dy = delta[offset + 1]
+    const dz = delta[offset + 2]
+    const magnitude = Math.hypot(dx, dy, dz)
+    if (magnitude <= MOTION_EPSILON) continue
+
+    movedVertices += 1
+    const y = base.getY(vertex)
+    movedMinY = Math.min(movedMinY, y)
+    movedMaxY = Math.max(movedMaxY, y)
+    maxVerticalTravel = Math.max(maxVerticalTravel, Math.abs(dy))
+
+    // Ignore almost-horizontal motion when estimating lid convergence. It is
+    // still preserved in the actual morph; it simply does not define closure.
+    if (Math.abs(dy) < magnitude * 0.2 || Math.abs(dy) <= MOTION_EPSILON) continue
+
+    const weight = Math.abs(dy)
+    if (dy < 0) {
+      downwardWeight += weight
+      downwardY += y * weight
+      downwardDy += dy * weight
+    } else {
+      upwardWeight += weight
+      upwardY += y * weight
+      upwardDy += dy * weight
+    }
+  }
+
+  if (movedVertices < 8 || maxVerticalTravel <= MOTION_EPSILON) return 1
+
+  let solvedGain = 1
+  if (downwardWeight > MOTION_EPSILON && upwardWeight > MOTION_EPSILON) {
+    const upperY = downwardY / downwardWeight
+    const lowerY = upwardY / upwardWeight
+    const upperDy = downwardDy / downwardWeight
+    const lowerDy = upwardDy / upwardWeight
+    const gap = Math.abs(upperY - lowerY)
+    const closingTravel = Math.abs(lowerDy - upperDy)
+    if (gap > MOTION_EPSILON && closingTravel > MOTION_EPSILON) {
+      solvedGain = gap / closingTravel * CLOSURE_MARGIN
+    }
+  }
+
+  const movedSpan = movedMaxY - movedMinY
+  const spanGain = movedSpan > MOTION_EPSILON
+    ? movedSpan / (2 * maxVerticalTravel) * CLOSURE_MARGIN
+    : 1
+
+  const derived = Math.max(1, solvedGain, spanGain)
+  return clamp(derived, 1, MAX_AUTHORED_BLINK_GAIN)
+}
+
 function installMaterialEyeShader(
   material: Material,
   bindings: EyeShaderBinding[],
+  leftGain: number,
+  rightGain: number,
 ): void {
   const leftUniform: EyeUniform = { value: 0 }
   const rightUniform: EyeUniform = { value: 0 }
@@ -142,9 +238,9 @@ uniform float facecamBlinkRight;
     debugState.compiledPrograms += 1
   }
 
-  material.customProgramCacheKey = () => `${previousCacheKey()}|facecam-authored-eyelids-v1`
+  material.customProgramCacheKey = () => `${previousCacheKey()}|facecam-authored-eyelids-v2`
   material.needsUpdate = true
-  bindings.push({ leftUniform, rightUniform })
+  bindings.push({ leftUniform, rightUniform, leftGain, rightGain })
 }
 
 export function attachAuthoredEyeShader(root: Object3D | null): EyeShaderBinding[] {
@@ -172,6 +268,8 @@ export function attachAuthoredEyeShader(root: Object3D | null): EyeShaderBinding
 
     const leftNormal = extractDelta(normal, morphNormals?.[leftIndex], relative) ?? zeroDelta(normal.count)
     const rightNormal = extractDelta(normal, morphNormals?.[rightIndex], relative) ?? zeroDelta(normal.count)
+    const leftGain = estimateBlinkClosureGain(position, leftPosition)
+    const rightGain = estimateBlinkClosureGain(position, rightPosition)
 
     object.geometry.setAttribute('facecamBlinkLeftPosition', new Float32BufferAttribute(leftPosition, 3))
     object.geometry.setAttribute('facecamBlinkRightPosition', new Float32BufferAttribute(rightPosition, 3))
@@ -180,10 +278,16 @@ export function attachAuthoredEyeShader(root: Object3D | null): EyeShaderBinding
 
     const materials = Array.isArray(object.material) ? object.material : [object.material]
     for (const material of materials) {
-      installMaterialEyeShader(material, bindings)
+      installMaterialEyeShader(material, bindings, leftGain, rightGain)
     }
   })
 
+  debugState.leftGain = bindings.length
+    ? Math.max(...bindings.map((binding) => binding.leftGain))
+    : 1
+  debugState.rightGain = bindings.length
+    ? Math.max(...bindings.map((binding) => binding.rightGain))
+    : 1
   return bindings
 }
 
@@ -195,8 +299,8 @@ export function applyAuthoredEyeShader(
   const left = clamp01(leftValue)
   const right = clamp01(rightValue)
   for (const binding of bindings) {
-    binding.leftUniform.value = left
-    binding.rightUniform.value = right
+    binding.leftUniform.value = left * binding.leftGain
+    binding.rightUniform.value = right * binding.rightGain
   }
   debugState.lastLeft = left
   debugState.lastRight = right
@@ -224,6 +328,10 @@ export function installStaticDragonEyeShaderPatch(): void {
 
   prototype.load = async function patchedLoad(file: Blob): Promise<void> {
     await originalLoad.call(this, file)
+    debugState.rendererBindings = 0
+    debugState.compiledPrograms = 0
+    debugState.leftGain = 1
+    debugState.rightGain = 1
     const root = (this as unknown as RendererInternals).modelRoot
     const bindings = attachAuthoredEyeShader(root)
     bindingsByRenderer.set(this, bindings)
