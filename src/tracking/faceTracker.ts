@@ -20,6 +20,8 @@ export class FaceTracker {
   private diagnosticPanel: HTMLDivElement | null = null
   private readonly diagnosticEnabled = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('eyeRigTest') === '1'
+  private readonly liveDebugEnabled = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('faceDebug') === '1'
 
   async initialize(): Promise<void> {
     if (this.landmarker) return
@@ -61,17 +63,27 @@ export class FaceTracker {
     this.lastTimestamp = timestampMs
 
     const result = this.landmarker.detectForVideo(video, timestampMs)
-    if (!this.diagnosticEnabled || !result.faceLandmarks[0]) return result
+    if ((!this.diagnosticEnabled && !this.liveDebugEnabled) || !result.faceLandmarks[0]) return result
 
-    if (this.diagnosticStartedAt < 0) this.diagnosticStartedAt = timestampMs
-    const elapsed = timestampMs - this.diagnosticStartedAt
-    const frame = eyeRigDiagnosticFrame(elapsed)
     const snapshot = eyeSignalSnapshot(result)
-    this.updateDiagnosticPanel(frame?.label ?? 'SEÑAL EN VIVO', snapshot)
 
-    return frame
-      ? overrideEyeBlinkScores(result, frame.left, frame.right)
-      : result
+    if (this.diagnosticEnabled) {
+      if (this.diagnosticStartedAt < 0) this.diagnosticStartedAt = timestampMs
+      const elapsed = timestampMs - this.diagnosticStartedAt
+      const frame = eyeRigDiagnosticFrame(elapsed)
+      this.updateDiagnosticPanel(
+        frame ? `RIG FORZADO · ${frame.label}` : 'RIG FORZADO TERMINADO · SEÑAL EN VIVO',
+        snapshot,
+        true,
+      )
+
+      return frame
+        ? overrideEyeBlinkScores(result, frame.left, frame.right)
+        : result
+    }
+
+    this.updateDiagnosticPanel('SEÑAL EN VIVO · SIN ALTERAR', snapshot, false)
+    return result
   }
 
   close(): void {
@@ -85,6 +97,7 @@ export class FaceTracker {
   private updateDiagnosticPanel(
     label: string,
     snapshot: ReturnType<typeof eyeSignalSnapshot>,
+    forced: boolean,
   ): void {
     if (!this.diagnosticPanel) {
       const panel = document.createElement('div')
@@ -107,10 +120,17 @@ export class FaceTracker {
 
     const openingLeft = snapshot.openingLeft === null ? '—' : snapshot.openingLeft.toFixed(3)
     const openingRight = snapshot.openingRight === null ? '—' : snapshot.openingRight.toFixed(3)
+    const mouthHeight = snapshot.mouthHeight === null ? '—' : snapshot.mouthHeight.toFixed(4)
+    const mouthGapToSpan = snapshot.mouthGapToSpan === null ? '—' : snapshot.mouthGapToSpan.toFixed(4)
+
     this.diagnosticPanel.textContent = [
-      `PRUEBA DEL RIG: ${label}`,
+      `FACE CAM DIAGNÓSTICO: ${label}`,
+      forced ? 'ATENCIÓN: los blink enviados al rig están siendo forzados temporalmente.' : 'LECTURA: ningún valor está siendo modificado.',
       `MediaPipe blink L ${snapshot.rawLeft.toFixed(3)} · R ${snapshot.rawRight.toFixed(3)}`,
-      `Apertura geométrica L ${openingLeft} · R ${openingRight}`,
+      `Apertura ojo L ${openingLeft} · R ${openingRight}`,
+      `jawOpen ${snapshot.jawOpen.toFixed(3)} · mouthClose ${snapshot.mouthClose.toFixed(3)}`,
+      `Boca geom. altura ${mouthHeight} · gap/span ${mouthGapToSpan}`,
+      `Blendshapes recibidos: ${snapshot.blendshapeCount}`,
     ].join('\n')
   }
 }
