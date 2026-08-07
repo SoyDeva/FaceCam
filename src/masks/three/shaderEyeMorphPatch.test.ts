@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyAuthoredEyeShader,
   attachAuthoredEyeShader,
+  estimateBlinkClosureGain,
 } from './shaderEyeMorphPatch'
 
 function riggedMesh(): Mesh {
@@ -45,6 +46,20 @@ function riggedMesh(): Mesh {
 }
 
 describe('authored eyelid shader path', () => {
+  it('derives the gain required for upper and lower authored lid surfaces to meet', () => {
+    const base = new Float32BufferAttribute([
+      -0.3, 1, 0, -0.1, 1, 0, 0.1, 1, 0, 0.3, 1, 0,
+      -0.3, 0, 0, -0.1, 0, 0, 0.1, 0, 0, 0.3, 0, 0,
+    ], 3)
+    const delta = new Float32Array([
+      0, -0.2, 0, 0, -0.2, 0, 0, -0.2, 0, 0, -0.2, 0,
+      0, 0.2, 0, 0, 0.2, 0, 0, 0.2, 0, 0, 0.2, 0,
+    ])
+
+    // Gap 1.0 / combined travel 0.4 = 2.5; add the 8% closure margin.
+    expect(estimateBlinkClosureGain(base, delta)).toBeCloseTo(2.7, 5)
+  })
+
   it('attaches the exact authored eye deltas as vertex attributes', () => {
     const root = new Object3D()
     const mesh = riggedMesh()
@@ -83,6 +98,8 @@ describe('authored eyelid shader path', () => {
     expect(shader.vertexShader).toContain('transformed += facecamBlinkLeftPosition')
     expect(shader.vertexShader).toContain('objectNormal += facecamBlinkLeftNormal')
 
+    // This tiny synthetic rig has fewer than eight moving vertices, so its
+    // safety fallback gain remains 1.0 and the raw channel values are preserved.
     applyAuthoredEyeShader(bindings, 1, 0.25)
     expect(bindings[0].leftUniform.value).toBe(1)
     expect(bindings[0].rightUniform.value).toBe(0.25)
