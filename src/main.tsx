@@ -1,10 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import { installStaticDragonCpuEyeMorphPatch } from './masks/three/cpuEyeMorphPatch'
+import { installStaticDragonEyeShaderPatch } from './masks/three/shaderEyeMorphPatch'
 import './styles.css'
 
-installStaticDragonCpuEyeMorphPatch()
+installStaticDragonEyeShaderPatch()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
