@@ -170,7 +170,13 @@ function runtimeEyeBlinkEvidence(
 
   if (state.openBaseline <= 0) {
     state.openBaseline = opening
-    return direct
+    // Keep a first-frame geometry fallback for an unmistakably closed eye.
+    // It is intentionally stricter than the old always-on absolute detector,
+    // so naturally narrow open eyes are not treated as partially closed.
+    const firstFrameGeometry = opening <= 0.052
+      ? 1 - smoothstep(0.045, 0.065, opening)
+      : 0
+    return Math.max(direct, firstFrameGeometry)
   }
 
   const baselineBeforeUpdate = Math.max(0.0001, state.openBaseline)
@@ -219,7 +225,12 @@ function resolveEyeBlink(
   // Once guided calibration exists, use that coherent detector instead of
   // taking the maximum of several independent detectors. The previous max()
   // strategy let any noisy geometry estimate override a healthy neutral eye.
-  if (calibratedBlink !== null) return clamp(calibratedBlink)
+  if (calibratedBlink !== null) {
+    // A stored calibration may become stale after camera/distance changes.
+    // The live ratio remains a safety net, but its baseline is now a typical
+    // opening rather than a running maximum, so it cannot poison neutral.
+    return Math.max(clamp(calibratedBlink), runtimeBlink ?? 0)
+  }
   return Math.max(directBlink, runtimeBlink ?? 0)
 }
 
