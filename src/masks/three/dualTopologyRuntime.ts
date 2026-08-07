@@ -2,21 +2,21 @@ import type { Object3D } from 'three'
 import type { DragonExpressionState } from './dragonExpressions'
 import { StaticDragonRenderer } from './StaticDragonRenderer'
 
-const NEUTRAL_NODE_NAME = 'FaceCamNeutralSource'
-const OPEN_NODE_NAME = 'FaceCamOpenRig'
+const HEAD_NODE_NAME = 'FaceCamHeadStatic'
+const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
+const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
 
-// The authored closed and open source files use different topology. Do not try
-// to morph one base mesh all the way into the other at rest. The original
-// neutral stays authoritative until a real mouth opening is underway; the
-// original open topology then takes over with hysteresis so tracking noise
-// cannot make the renderer chatter between meshes.
+// v13 keeps the real neutral head permanently visible. Only the oral region
+// switches topology, so opening the mouth cannot change the forehead, eyes,
+// cheeks, horns or the overall facial proportions.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.12
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.045
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.2
 
-interface DualTopologyState {
-  neutralRoot: Object3D
-  openRoot: Object3D
+interface RegionalHybridState {
+  headRoot: Object3D
+  neutralMouthRoot: Object3D
+  openMouthRoot: Object3D
   openActive: boolean
 }
 
@@ -29,8 +29,8 @@ interface RendererPrivateView {
   modelRoot: Object3D | null
 }
 
-const states = new WeakMap<StaticDragonRenderer, DualTopologyState>()
-const patchMarker = Symbol.for('facecam.dualTopologyRuntime.v12')
+const states = new WeakMap<StaticDragonRenderer, RegionalHybridState>()
+const patchMarker = Symbol.for('facecam.regionalHybridRuntime.v13')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 export function resolveDualTopologyJaw(
@@ -55,31 +55,38 @@ export function resolveDualTopologyJaw(
   return { openActive: true, morphJaw }
 }
 
-function installDualTopologyRuntime(): void {
+function installRegionalHybridRuntime(): void {
   if (prototype[patchMarker]) return
   prototype[patchMarker] = true
 
   const originalLoad = prototype.load
   const originalApplyExpression = prototype.applyExpression
 
-  prototype.load = async function loadWithDualTopology(file: Blob): Promise<void> {
+  prototype.load = async function loadWithRegionalHybrid(file: Blob): Promise<void> {
     await originalLoad.call(this, file)
 
     const root = (this as unknown as RendererPrivateView).modelRoot
-    const neutralRoot = root?.getObjectByName(NEUTRAL_NODE_NAME) ?? null
-    const openRoot = root?.getObjectByName(OPEN_NODE_NAME) ?? null
+    const headRoot = root?.getObjectByName(HEAD_NODE_NAME) ?? null
+    const neutralMouthRoot = root?.getObjectByName(NEUTRAL_MOUTH_NODE_NAME) ?? null
+    const openMouthRoot = root?.getObjectByName(OPEN_MOUTH_NODE_NAME) ?? null
 
-    if (!neutralRoot || !openRoot) {
+    if (!headRoot || !neutralMouthRoot || !openMouthRoot) {
       states.delete(this)
       return
     }
 
-    neutralRoot.visible = true
-    openRoot.visible = false
-    states.set(this, { neutralRoot, openRoot, openActive: false })
+    headRoot.visible = true
+    neutralMouthRoot.visible = true
+    openMouthRoot.visible = false
+    states.set(this, {
+      headRoot,
+      neutralMouthRoot,
+      openMouthRoot,
+      openActive: false,
+    })
   }
 
-  prototype.applyExpression = function applyExpressionWithDualTopology(
+  prototype.applyExpression = function applyExpressionWithRegionalHybrid(
     expression: DragonExpressionState,
   ): void {
     const state = states.get(this)
@@ -90,8 +97,11 @@ function installDualTopologyRuntime(): void {
 
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
-    state.neutralRoot.visible = !resolved.openActive
-    state.openRoot.visible = resolved.openActive
+
+    // The neutral head never disappears. Only the mouth patch changes.
+    state.headRoot.visible = true
+    state.neutralMouthRoot.visible = !resolved.openActive
+    state.openMouthRoot.visible = resolved.openActive
 
     originalApplyExpression.call(this, {
       ...expression,
@@ -100,4 +110,4 @@ function installDualTopologyRuntime(): void {
   }
 }
 
-installDualTopologyRuntime()
+installRegionalHybridRuntime()
