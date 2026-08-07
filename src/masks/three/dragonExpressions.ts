@@ -94,15 +94,6 @@ function directBlinkEvidence(rawBlink: number): number {
   return clamp(Math.pow(activated, 0.52))
 }
 
-// Conservative first-frame fallback. It only activates for an unmistakably
-// tiny eye opening; ordinary asymmetric open eyes remain neutral.
-function directGeometryBlinkEvidence(opening: number): number {
-  if (!Number.isFinite(opening)) return 0
-  const closure = 1 - smoothstep(0.04, 0.07, opening)
-  if (closure < 0.04) return 0
-  return clamp(Math.pow(closure, 0.72))
-}
-
 function calibratedEyeBlinkEvidence(
   opening: number,
   rawBlink: number,
@@ -131,21 +122,32 @@ function calibratedEyeBlinkEvidence(
     return null
   }
 
-  const geometry = 1 - smoothstep(0.46, 0.84, geometryRatio)
+  // Calibrated users should be judged against their habitual open-eye sample,
+  // not against a hard-coded eye size. Geometry only becomes decisive once
+  // the eyelids are substantially closer than normal; ordinary narrow or
+  // asymmetric eyes remain fully open.
+  const geometry = 1 - smoothstep(0.4, 0.72, geometryRatio)
   const blendshape = blinkRange >= 0.12
-    ? smoothstep(
-      0.08,
-      0.88,
-      (rawBlink - blinkOpenReference) / Math.max(0.0001, blinkRange),
+    ? Math.pow(
+      smoothstep(
+        0.02,
+        0.65,
+        (rawBlink - blinkOpenReference) / Math.max(0.0001, blinkRange),
+      ),
+      0.58,
     )
     : 0
-  return Math.max(geometry, blendshape)
+
+  if (geometryRatio <= 0.4) return Math.max(geometry, blendshape)
+  if (blendshape < 0.06) return 0
+  return Math.max(blendshape, geometry * 0.85)
 }
 
 /**
- * Tracks the largest credible opening for each eye and measures closure as a
- * ratio of that live baseline. It works after the first open frame and does
- * not depend on a fixed eye size, a completed calibration, or blendshapes.
+ * Maintains a typical open-eye baseline, not the largest opening ever seen.
+ * A brief wide-eyed expression must never redefine neutral and make normal
+ * eyes look half closed afterward. The baseline rises slowly and returns to
+ * ordinary open-eye height much faster when MediaPipe reports no blink.
  */
 function runtimeEyeBlinkEvidence(
   side: RuntimeEyeSide,
@@ -167,32 +169,43 @@ function runtimeEyeBlinkEvidence(
   state.lastSeenAt = now
 
   if (state.openBaseline <= 0) {
+    // A first frame that already looks closed is useful as blink evidence but
+    // must never become the learned "open" reference. Wait for a credible
+    // open frame before initializing the baseline.
+    const firstFrameGeometry = opening <= 0.052
+      ? 1 - smoothstep(0.045, 0.065, opening)
+      : 0
+    const firstFrameBlink = Math.max(direct, firstFrameGeometry)
+    if (firstFrameBlink >= 0.1) return firstFrameBlink
+
     state.openBaseline = opening
-    return direct
+    return 0
   }
 
   const baselineBeforeUpdate = Math.max(0.0001, state.openBaseline)
   const openingRatio = opening / baselineBeforeUpdate
-  const geometry = 1 - smoothstep(0.48, 0.78, openingRatio)
+  const geometry = 1 - smoothstep(0.38, 0.68, openingRatio)
   const rapidDrop = previousOpening > 0
     ? clamp((previousOpening - opening) / baselineBeforeUpdate)
     : 0
-  const temporal = openingRatio < 0.72
-    ? smoothstep(0.12, 0.38, rapidDrop)
+  const temporal = openingRatio < 0.74
+    ? smoothstep(0.1, 0.34, rapidDrop)
     : 0
 
-  // Only clearly open frames may move the baseline. A closed frame can never
-  // teach the detector that the closed height is the new neutral height.
-  const appearsOpen = direct < 0.18 && openingRatio >= 0.78
-  if (appearsOpen) {
-    if (opening > state.openBaseline) {
-      state.openBaseline = lerp(state.openBaseline, opening, 0.5)
-    } else if (openingRatio >= 0.9) {
-      state.openBaseline = lerp(state.openBaseline, opening, 0.006)
-    }
+  // Learn only frames that look open. Wide-eyed frames move the reference
+  // very slowly; a return to the user's ordinary open-eye height moves it
+  // back much faster. This prevents the "I must open my eyes to the maximum"
+  // failure mode seen with a running maximum baseline.
+  if (direct < 0.12 && openingRatio >= 0.68) {
+    const adaptation = opening > state.openBaseline ? 0.025 : 0.18
+    state.openBaseline = lerp(state.openBaseline, opening, adaptation)
   }
 
-  const candidate = Math.max(direct, geometry, temporal)
+  // Geometry by itself is allowed only for an unmistakably closed eye.
+  // Otherwise it must agree with the blendshape or a rapid eyelid drop.
+  const geometrySupported = direct >= 0.06 || temporal >= 0.08 || openingRatio <= 0.4
+  const geometryEvidence = geometrySupported ? geometry : 0
+  const candidate = Math.max(direct, geometryEvidence, temporal)
   if (candidate < 0.06) return 0
   return clamp(Math.pow(candidate, 0.62))
 }
@@ -208,17 +221,17 @@ function maybeResetRuntimeEyesWhenTrackingIsLost(): void {
 }
 
 function resolveEyeBlink(
-  opening: number,
   directBlink: number,
   runtimeBlink: number | null,
   calibratedBlink: number | null,
 ): number {
-  return Math.max(
-    directBlink,
-    directGeometryBlinkEvidence(opening),
-    runtimeBlink ?? 0,
-    calibratedBlink ?? 0,
-  )
+  if (calibratedBlink !== null) {
+    // A stored calibration may become stale after camera/distance changes.
+    // The live ratio remains a safety net, but its baseline is now a typical
+    // opening rather than a running maximum, so it cannot poison neutral.
+    return Math.max(clamp(calibratedBlink), runtimeBlink ?? 0)
+  }
+  return Math.max(directBlink, runtimeBlink ?? 0)
 }
 
 export function estimateDragonExpression(
@@ -272,13 +285,11 @@ export function estimateDragonExpression(
     )
     : null
   const blinkLeft = resolveEyeBlink(
-    metrics.leftEyeOpening,
     rawLeftBlink,
     runtimeLeftBlink,
     calibratedLeftBlink,
   )
   const blinkRight = resolveEyeBlink(
-    metrics.rightEyeOpening,
     rawRightBlink,
     runtimeRightBlink,
     calibratedRightBlink,
