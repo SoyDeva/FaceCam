@@ -1,109 +1,48 @@
-import {
-  Box3,
-  BufferGeometry,
-  Float32BufferAttribute,
-  Mesh,
-  MeshBasicMaterial,
-  Object3D,
-  Vector3,
-} from 'three'
 import { describe, expect, it } from 'vitest'
 import {
-  applyDragonMeshEyelidRig,
-  createDragonMeshEyelidRig,
-  resolveNativeDragonBlinkInfluence,
+  resolveDragonEyelidVertexWeight,
+  resolveDragonMeshBlink,
 } from './dragonMeshEyelidRig'
 
-function riggedHead() {
-  const root = new Object3D()
-  const geometry = new BufferGeometry()
-  geometry.setAttribute(
-    'position',
-    new Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 0, 1, 0], 3),
-  )
-  geometry.morphAttributes.position = [
-    new Float32BufferAttribute([0, 0, 0, 0, -0.2, 0, 0, 0, 0], 3),
-    new Float32BufferAttribute([0, -0.1, 0, 0, 0, 0, 0, 0, 0], 3),
-    new Float32BufferAttribute([0, 0, 0, 0, -0.1, 0, 0, 0, 0], 3),
-  ]
+describe('resolveDragonMeshBlink', () => {
+  it('keeps weak eyelid noise fully open', () => {
+    expect(resolveDragonMeshBlink(0.08)).toBe(0)
+  })
 
-  const mesh = new Mesh(geometry, new MeshBasicMaterial())
-  mesh.morphTargetDictionary = {
-    jawOpen: 0,
-    eyeBlinkLeft: 1,
-    eyeBlinkRight: 2,
+  it('turns a natural blink into a clear closure', () => {
+    expect(resolveDragonMeshBlink(0.35)).toBeGreaterThan(0.68)
+  })
+
+  it('reaches full closure before the signal saturates', () => {
+    expect(resolveDragonMeshBlink(0.52)).toBe(1)
+    expect(resolveDragonMeshBlink(1)).toBe(1)
+  })
+})
+
+describe('resolveDragonEyelidVertexWeight', () => {
+  const leftEye = {
+    x: -0.17,
+    y: 0.05,
+    radiusX: 0.145,
+    radiusY: 0.105,
+    side: 'left' as const,
   }
-  mesh.morphTargetInfluences = [0.37, 0, 0]
-  root.add(mesh)
 
-  return {
-    root,
-    mesh,
-    positions: Array.from(geometry.getAttribute('position').array),
-    morphPositions: geometry.morphAttributes.position.map((attribute) => Array.from(attribute.array)),
-  }
-}
-
-describe('dragon GLB v4 native eyelids', () => {
-  it('rejects neutral noise and makes ordinary blinks clearly visible', () => {
-    expect(resolveNativeDragonBlinkInfluence(0.02)).toBe(0)
-    expect(resolveNativeDragonBlinkInfluence(0.18)).toBeGreaterThan(0.25)
-    expect(resolveNativeDragonBlinkInfluence(0.5)).toBeGreaterThan(0.7)
-    expect(resolveNativeDragonBlinkInfluence(1)).toBeCloseTo(1)
+  it('targets the dragon eye region strongly', () => {
+    expect(
+      resolveDragonEyelidVertexWeight(-0.17, 0.05, 0.4, leftEye, -0.05, 0.5, 0.028),
+    ).toBeGreaterThan(0.8)
   })
 
-  it('binds the GLB morphs without creating or rewriting geometry', () => {
-    const { root, mesh, positions, morphPositions } = riggedHead()
-    const originalChildren = root.children.length
-    const bindings = createDragonMeshEyelidRig(
-      root,
-      new Box3(new Vector3(-1, -1, -1), new Vector3(1, 1, 1)),
-      new Vector3(2, 2, 2),
-      new Vector3(),
-      0,
-    )
-
-    expect(bindings).toHaveLength(1)
-    expect(root.children).toHaveLength(originalChildren)
-    expect(Array.from(mesh.geometry.getAttribute('position').array)).toEqual(positions)
-    expect(mesh.geometry.morphAttributes.position?.map((attribute) => Array.from(attribute.array)))
-      .toEqual(morphPositions)
+  it('does not deform the central snout', () => {
+    expect(
+      resolveDragonEyelidVertexWeight(0, 0.05, 0.4, leftEye, -0.05, 0.5, 0.028),
+    ).toBe(0)
   })
 
-  it('controls each eye independently and leaves the jaw unchanged', () => {
-    const { root, mesh } = riggedHead()
-    const bindings = createDragonMeshEyelidRig(
-      root,
-      new Box3(),
-      new Vector3(),
-      new Vector3(),
-      0,
-    )
-
-    applyDragonMeshEyelidRig(bindings, 1, 0.5)
-
-    expect(mesh.morphTargetInfluences?.[0]).toBe(0.37)
-    expect(mesh.morphTargetInfluences?.[1]).toBeCloseTo(1)
-    expect(mesh.morphTargetInfluences?.[2]).toBeGreaterThan(0.7)
-    expect(mesh.morphTargetInfluences?.[2]).toBeLessThan(1)
-  })
-
-  it('reopens both eyes without changing the authored morph data', () => {
-    const { root, mesh, morphPositions } = riggedHead()
-    const bindings = createDragonMeshEyelidRig(
-      root,
-      new Box3(),
-      new Vector3(),
-      new Vector3(),
-      0,
-    )
-
-    applyDragonMeshEyelidRig(bindings, 1, 1)
-    applyDragonMeshEyelidRig(bindings, 0, 0)
-
-    expect(mesh.morphTargetInfluences?.[1]).toBe(0)
-    expect(mesh.morphTargetInfluences?.[2]).toBe(0)
-    expect(mesh.geometry.morphAttributes.position?.map((attribute) => Array.from(attribute.array)))
-      .toEqual(morphPositions)
+  it('does not deform the rear of the head', () => {
+    expect(
+      resolveDragonEyelidVertexWeight(-0.17, 0.05, -0.2, leftEye, -0.05, 0.5, 0.028),
+    ).toBe(0)
   })
 })
