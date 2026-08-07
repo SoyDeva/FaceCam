@@ -50,31 +50,37 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v11 installer bundle
+      - name: Verify GLB v12 dual-source installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v10.glb'
-          corrected='El modelo guardado no activó el rig facial del Dragón Blanco v11.'
-          model='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v11.glb'
-          fingerprint='9251acfd3df9f9f50314b5020eb97cc1aee18adc5cf6d915528c7e11dcc60b1c'
+          obsolete='FaceCam-Dragon-Blanco-Rigged-CORRECTO-v11.glb'
+          corrected='El modelo guardado no activó el rig facial dual del Dragón Blanco v12.'
+          model='FaceCam-Dragon-Blanco-DUAL-SOURCE-v12.glb'
+          fingerprint='dc1d3cc2c64877e85785a53214240d98a53730fac3f2e721b4184ee3946aa698'
+          runtime='FaceCamNeutralSource'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v10 con la mandíbula neutral relajada globalmente."
+            echo "::error::El paquete todavía solicita el GLB v11 con neutral reconstruido sobre la topología abierta."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación facial v11."
+            echo "::error::El paquete no contiene la validación facial dual v12."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB v11 oficial."
+            echo "::error::El paquete no solicita el GLB dual-source v12 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v11."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v12."
+            exit 1
+          fi
+
+          if ! grep -R -Fq "$runtime" dist; then
+            echo "::error::El paquete no contiene la selección runtime de topologías neutral/abierta."
             exit 1
           fi
 
