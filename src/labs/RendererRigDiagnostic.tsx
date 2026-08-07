@@ -3,7 +3,6 @@ import { Mesh, type BufferAttribute } from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { StaticDragonRenderer, DEFAULT_STATIC_DRAGON_CALIBRATION } from '../masks/three/StaticDragonRenderer'
 import { loadLocalDragonModel } from '../masks/three/localAssetStore'
-import { getEyeShaderDebugState } from '../masks/three/shaderEyeMorphPatch'
 import type { StaticDragonPoseEstimate } from '../masks/three/staticPose'
 
 type RigStage = 'NEUTRAL' | 'MANDÍBULA 100%' | 'AMBOS OJOS 100%' | 'OJO IZQUIERDO 100%' | 'OJO DERECHO 100%'
@@ -22,6 +21,7 @@ interface MorphReport {
 
 const WIDTH = 960
 const HEIGHT = 720
+const BUILD_SHA = import.meta.env.VITE_FACECAM_BUILD_SHA ?? 'dev'
 const STAGES: Array<{ label: RigStage; duration: number; jawOpen: number; blinkLeft: number; blinkRight: number }> = [
   { label: 'NEUTRAL', duration: 1200, jawOpen: 0, blinkLeft: 0, blinkRight: 0 },
   { label: 'MANDÍBULA 100%', duration: 1500, jawOpen: 1, blinkLeft: 0, blinkRight: 0 },
@@ -148,7 +148,6 @@ export function RendererRigDiagnostic() {
   const [reports, setReports] = useState<MorphReport[]>([])
   const [status, setStatus] = useState('Cargando el GLB guardado…')
   const [rigMode, setRigMode] = useState('—')
-  const [eyeDebug, setEyeDebug] = useState(() => getEyeShaderDebugState())
 
   const worstWarning = useMemo(() => {
     if (!reports.length) return 'Todavía no hay reporte de morphs.'
@@ -156,7 +155,7 @@ export function RendererRigDiagnostic() {
     if (missingMotion.length) return `ALERTA: ${missingMotion.length} morph(s) tienen desplazamiento geométrico nulo.`
     const hidden = reports.filter((report) => !report.visible)
     if (hidden.length) return `ALERTA: ${hidden.length} morph(s) pertenecen a una malla no visible.`
-    return 'Los morphs reportan desplazamientos geométricos no nulos en mallas visibles.'
+    return 'Los tres morphs tienen desplazamiento geométrico no nulo en la malla visible.'
   }, [reports])
 
   useEffect(() => {
@@ -182,18 +181,16 @@ export function RendererRigDiagnostic() {
       }
 
       setRigMode(renderer.facialRigMode)
-      setEyeDebug(getEyeShaderDebugState())
       const canvas = renderer.canvas
       canvas.style.display = 'block'
       canvas.style.width = '100%'
       canvas.style.height = 'auto'
       canvas.style.background = '#05070b'
       mountRef.current?.replaceChildren(canvas)
-      setStatus(`GLB cargado: ${stored.name}. Ciclo directo del renderer activo.`)
+      setStatus(`GLB cargado: ${stored.name}. Ciclo nativo del renderer activo.`)
 
       const startedAt = performance.now()
       let previousStage: RigStage | null = null
-      let lastDebugUpdate = 0
       const loop = (now: number) => {
         if (disposed || !renderer) return
         const current = stageAt(now - startedAt)
@@ -207,10 +204,6 @@ export function RendererRigDiagnostic() {
           false,
           null,
         )
-        if (now - lastDebugUpdate > 250) {
-          lastDebugUpdate = now
-          setEyeDebug(getEyeShaderDebugState())
-        }
         frame = requestAnimationFrame(loop)
       }
       frame = requestAnimationFrame(loop)
@@ -235,11 +228,9 @@ export function RendererRigDiagnostic() {
         <p style={{ marginTop: 0 }}>{status}</p>
         <div style={{ padding: '0.8rem 1rem', border: '1px solid rgba(140,236,255,0.55)', borderRadius: '0.75rem', marginBottom: '1rem' }}>
           <strong>FASE ACTUAL: {stage}</strong><br />
-          <span>Build: {eyeDebug.buildSha}</span><br />
+          <span>Build: {BUILD_SHA}</span><br />
           <span>Modo detectado por StaticDragonRenderer: {rigMode}</span><br />
-          <span>
-            Shader ocular: {eyeDebug.installed ? 'INSTALADO' : 'NO INSTALADO'} · bindings {eyeDebug.rendererBindings} · compilados {eyeDebug.compiledPrograms} · L {eyeDebug.lastLeft.toFixed(2)} · R {eyeDebug.lastRight.toFixed(2)}
-          </span><br />
+          <span>Ruta ocular: MORPHS NATIVOS DEL GLB · sin shader auxiliar · sin ganancia adicional</span><br />
           <span>{worstWarning}</span>
         </div>
 

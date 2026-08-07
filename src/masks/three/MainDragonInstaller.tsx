@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v7.glb'
-const OFFICIAL_MODEL_SHA256 = '7ee6ef7403768012f97c8370c480ea3b7a5e1e96fe92ad61d9e277c481ea9e5e'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-Rigged-CORRECTO-v8.glb'
+const OFFICIAL_MODEL_SHA256 = '9388ec811755a44e6c31809b820cc66f513648243dc89e58e4a0bbfb98335f11'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // The SHA-256 check guarantees the exact v7 GLB. Its eye morphs are on
-    // the actual visible eye line around y=0.46, while the base mesh and
-    // jawOpen target remain byte-identical to the previously approved mouth.
+    // The fingerprint guarantees the exact v8 GLB whose eyeBlink targets were
+    // rebuilt around the two blue visible eyes. Base mesh, textures and jawOpen
+    // are preserved from v7; only the two authored eyelid POSITION targets change.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó el rig facial del Dragón Blanco v7.',
+        'El modelo guardado no activó el rig facial del Dragón Blanco v8.',
       )
     }
   } finally {
@@ -50,7 +50,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco riggeado v7 de FaceCam.',
+      'El archivo no corresponde al Dragón Blanco riggeado v8 de FaceCam.',
     )
   }
 
@@ -72,11 +72,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v7 con los morphs sobre la línea real de ambos ojos.')
+          setMessage('Instala el dragón v8 con los párpados reconstruidos sobre los ojos azules.')
           return
         }
 
-        setMessage('Verificando el GLB v7, los dos ojos y la mandíbula conservada…')
+        setMessage('Verificando el GLB v8, sus dos párpados y la mandíbula conservada…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -84,12 +84,11 @@ export function MainDragonInstaller() {
           await removeLocalDragonModel()
           if (cancelled) return
 
-          // v7 changes only the authored eye targets. Keep the existing head
-          // and expression calibration so replacing the GLB cannot regress the
-          // approved mouth response or move the mask on the user's face.
+          // Replacing v7 with v8 changes only the authored eye targets. Preserve
+          // head/expression calibration so the approved mouth response is untouched.
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v7.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v8.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -101,7 +100,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco riggeado v7 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco riggeado v8 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -129,11 +128,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v7 sin modificar tu calibración de boca…')
+    setMessage('Verificando el GLB v8 sin modificar tu calibración de boca…')
 
     try {
       await install(file)
-      setMessage('Dragón v7 instalado. Reiniciando FaceCam y probando únicamente los ojos…')
+      setMessage('Dragón v8 instalado. Reiniciando FaceCam para validar el rig nativo…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -168,7 +167,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco riggeado v7
+        Dragón Blanco riggeado v8
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -190,7 +189,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v7'}
+            : 'Seleccionar dragón v8'}
       </button>
     </aside>
   )
