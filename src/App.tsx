@@ -3,13 +3,16 @@ import type { Session } from '@supabase/supabase-js'
 import { AuthPanel } from './auth/AuthPanel'
 import { CameraStudio } from './camera/CameraStudio'
 import { supabase } from './config/supabase'
+import { RendererRigDiagnostic } from './labs/RendererRigDiagnostic'
 import { StaticDragonCameraLab } from './labs/StaticDragonCameraLab'
 import { MainDragonInstaller } from './masks/three/MainDragonInstaller'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
-  const dragonLabEnabled = new URLSearchParams(window.location.search).get('dragonLab') === '1'
+  const params = new URLSearchParams(window.location.search)
+  const dragonLabEnabled = params.get('dragonLab') === '1'
+  const rendererRigTestEnabled = params.get('rendererRigTest') === '1'
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data }) => {
@@ -29,6 +32,7 @@ export default function App() {
 
   if (!session) return <div className="auth-shell"><AuthPanel /></div>
 
+  if (rendererRigTestEnabled) return <RendererRigDiagnostic />
   if (dragonLabEnabled) return <StaticDragonCameraLab />
 
   return (
