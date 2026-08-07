@@ -3,6 +3,7 @@ import { Mesh, type BufferAttribute } from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { StaticDragonRenderer, DEFAULT_STATIC_DRAGON_CALIBRATION } from '../masks/three/StaticDragonRenderer'
 import { loadLocalDragonModel } from '../masks/three/localAssetStore'
+import { getEyeShaderDebugState } from '../masks/three/shaderEyeMorphPatch'
 import type { StaticDragonPoseEstimate } from '../masks/three/staticPose'
 
 type RigStage = 'NEUTRAL' | 'MANDÍBULA 100%' | 'AMBOS OJOS 100%' | 'OJO IZQUIERDO 100%' | 'OJO DERECHO 100%'
@@ -147,6 +148,7 @@ export function RendererRigDiagnostic() {
   const [reports, setReports] = useState<MorphReport[]>([])
   const [status, setStatus] = useState('Cargando el GLB guardado…')
   const [rigMode, setRigMode] = useState('—')
+  const [eyeDebug, setEyeDebug] = useState(() => getEyeShaderDebugState())
 
   const worstWarning = useMemo(() => {
     if (!reports.length) return 'Todavía no hay reporte de morphs.'
@@ -180,6 +182,7 @@ export function RendererRigDiagnostic() {
       }
 
       setRigMode(renderer.facialRigMode)
+      setEyeDebug(getEyeShaderDebugState())
       const canvas = renderer.canvas
       canvas.style.display = 'block'
       canvas.style.width = '100%'
@@ -190,6 +193,7 @@ export function RendererRigDiagnostic() {
 
       const startedAt = performance.now()
       let previousStage: RigStage | null = null
+      let lastDebugUpdate = 0
       const loop = (now: number) => {
         if (disposed || !renderer) return
         const current = stageAt(now - startedAt)
@@ -203,6 +207,10 @@ export function RendererRigDiagnostic() {
           false,
           null,
         )
+        if (now - lastDebugUpdate > 250) {
+          lastDebugUpdate = now
+          setEyeDebug(getEyeShaderDebugState())
+        }
         frame = requestAnimationFrame(loop)
       }
       frame = requestAnimationFrame(loop)
@@ -227,7 +235,11 @@ export function RendererRigDiagnostic() {
         <p style={{ marginTop: 0 }}>{status}</p>
         <div style={{ padding: '0.8rem 1rem', border: '1px solid rgba(140,236,255,0.55)', borderRadius: '0.75rem', marginBottom: '1rem' }}>
           <strong>FASE ACTUAL: {stage}</strong><br />
+          <span>Build: {eyeDebug.buildSha}</span><br />
           <span>Modo detectado por StaticDragonRenderer: {rigMode}</span><br />
+          <span>
+            Shader ocular: {eyeDebug.installed ? 'INSTALADO' : 'NO INSTALADO'} · bindings {eyeDebug.rendererBindings} · compilados {eyeDebug.compiledPrograms} · L {eyeDebug.lastLeft.toFixed(2)} · R {eyeDebug.lastRight.toFixed(2)}
+          </span><br />
           <span>{worstWarning}</span>
         </div>
 
