@@ -55,8 +55,9 @@ describe('authored eyelid shader path', () => {
 
     const left = mesh.geometry.getAttribute('facecamBlinkLeftPosition') as Float32BufferAttribute
     const right = mesh.geometry.getAttribute('facecamBlinkRightPosition') as Float32BufferAttribute
-    expect(Array.from(left.array)).toEqual(Array.from(mesh.geometry.morphAttributes.position[1].array))
-    expect(Array.from(right.array)).toEqual(Array.from(mesh.geometry.morphAttributes.position[2].array))
+    const morphPositions = mesh.geometry.morphAttributes.position!
+    expect(Array.from(left.array)).toEqual(Array.from(morphPositions[1].array))
+    expect(Array.from(right.array)).toEqual(Array.from(morphPositions[2].array))
   })
 
   it('injects the eye attributes into the vertex shader and updates uniforms independently', () => {
