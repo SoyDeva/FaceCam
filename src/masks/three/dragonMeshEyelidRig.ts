@@ -1,30 +1,21 @@
-import {
-  Box3,
-  BufferAttribute,
-  DynamicDrawUsage,
-  Matrix4,
-  Mesh,
-  Object3D,
-  Vector3,
-} from 'three'
+import { Mesh, type Box3, type Object3D, type Vector3 } from 'three'
 
-const V7_EYE_LINE_RATIO = 0.46
+const BLINK_DEAD_ZONE = 0.02
+const LEFT_BLINK_ALIASES = ['eyeBlinkLeft', 'blinkLeft'] as const
+const RIGHT_BLINK_ALIASES = ['eyeBlinkRight', 'blinkRight'] as const
+const SELF_TEST_RIG_VERSION = '7.0.0'
 
+/**
+ * Each binding points only to morph-target influence slots authored inside
+ * the installed GLB. FaceCam never creates replacement eyelids and never
+ * rewrites POSITION or NORMAL attributes at runtime.
+ */
 export interface DragonMeshEyelidBinding {
-  position: BufferAttribute
-  basePositions: Float32Array
-  leftDeltas: Float32Array
-  rightDeltas: Float32Array
-  lastLeft: number
-  lastRight: number
-}
-
-interface EyeRegion {
-  x: number
-  y: number
-  radiusX: number
-  radiusY: number
-  side: 'left' | 'right'
+  influences: number[]
+  leftIndex?: number
+  rightIndex?: number
+  selfTestEnabled: boolean
+  selfTestStartedAt: number | null
 }
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -32,207 +23,93 @@ function clamp(value: number, min = 0, max = 1): number {
 }
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
-  if (edge0 === edge1) return value < edge0 ? 0 : 1
-  const normalized = clamp((value - edge0) / (edge1 - edge0))
-  return normalized * normalized * (3 - 2 * normalized)
+  const amount = clamp((value - edge0) / Math.max(0.0001, edge1 - edge0))
+  return amount * amount * (3 - 2 * amount)
 }
 
-export function resolveDragonMeshBlink(blink: number): number {
-  const normalized = clamp((blink - 0.09) / 0.43)
-  if (normalized >= 0.995) return 1
-  return Math.pow(normalized, 0.66)
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
-export function resolveDragonEyelidVertexWeight(
-  x: number,
-  y: number,
-  z: number,
-  eye: EyeRegion,
-  frontStart: number,
-  frontEnd: number,
-  centerGuard: number,
-): number {
-  if (eye.side === 'left' && x > -centerGuard) return 0
-  if (eye.side === 'right' && x < centerGuard) return 0
-
-  const normalizedX = Math.abs(x - eye.x) / Math.max(0.000001, eye.radiusX)
-  const normalizedY = Math.abs(y - eye.y) / Math.max(0.000001, eye.radiusY)
-  const ellipticalDistance = Math.sqrt(
-    normalizedX * normalizedX + normalizedY * normalizedY,
-  )
-  const radialWeight = 1 - smoothstep(0.68, 1.12, ellipticalDistance)
-  const frontWeight = smoothstep(frontStart, frontEnd, z)
-  return clamp(radialWeight * frontWeight)
+function normalizedMorphName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-function normalizedObjectLabel(mesh: Mesh): string {
-  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-  return [
-    mesh.name,
-    mesh.geometry.name,
-    ...materials.map((material) => material.name),
-  ]
-    .join(' ')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-}
-
-function isDetachedEyeSurface(mesh: Mesh): boolean {
-  const label = normalizedObjectLabel(mesh)
-  const explicitlyEyelid = /eye\s*lid|eyelid|lid|head|face|skin/.test(label)
-  const detachedEye = /iris|pupil|cornea|eyeball|eye\s*ball|lens/.test(label)
-  return detachedEye && !explicitlyEyelid
-}
-
-function writeWeightedClosureDelta(
-  localPosition: Vector3,
-  worldPosition: Vector3,
-  inverseWorld: Matrix4,
-  eye: EyeRegion,
-  weight: number,
-  modelSize: Vector3,
-  output: Float32Array,
-  offset: number,
-): void {
-  if (weight <= 0) return
-
-  const direction = worldPosition.y >= eye.y ? 1 : -1
-  const closureLine = eye.y - modelSize.y * 0.004
-  const closedSlit = modelSize.y * 0.0025
-  const horizontalDistance = Math.min(
-    1,
-    Math.abs(worldPosition.x - eye.x) / Math.max(0.000001, eye.radiusX),
+function resolveMorphIndex(
+  dictionary: Record<string, number>,
+  aliases: readonly string[],
+): number | undefined {
+  const normalized = new Map(
+    Object.entries(dictionary).map(([name, index]) => [normalizedMorphName(name), index]),
   )
 
-  const targetWorld = worldPosition.clone()
-  targetWorld.y = closureLine + direction * closedSlit
-  targetWorld.z += modelSize.z * 0.012 * (1 - horizontalDistance)
+  for (const alias of aliases) {
+    const index = normalized.get(normalizedMorphName(alias))
+    if (index !== undefined) return index
+  }
+  return undefined
+}
 
-  const targetLocal = targetWorld.applyMatrix4(inverseWorld)
-  output[offset] = (targetLocal.x - localPosition.x) * weight
-  output[offset + 1] = (targetLocal.y - localPosition.y) * weight
-  output[offset + 2] = (targetLocal.z - localPosition.z) * weight
+function resolveSelfTestInfluence(binding: DragonMeshEyelidBinding, now: number): number {
+  if (!binding.selfTestEnabled) return 0
+  if (binding.selfTestStartedAt === null) binding.selfTestStartedAt = now
+
+  const elapsed = now - binding.selfTestStartedAt
+  if (elapsed < 250) return 0
+  if (elapsed < 475) return smoothstep(250, 475, elapsed)
+  if (elapsed < 875) return 1
+  if (elapsed < 1125) return 1 - smoothstep(875, 1125, elapsed)
+
+  binding.selfTestEnabled = false
+  return 0
+}
+
+/**
+ * The v7 GLB stores complete eye closure at morph influence 1. The incoming
+ * expression already contains noise rejection, so this final response curve
+ * prioritizes a clearly visible closure instead of leaving natural blinks at
+ * an imperceptible fraction of the authored morph travel.
+ */
+export function resolveNativeDragonBlinkInfluence(blink: number): number {
+  const safeBlink = clamp(blink)
+  if (safeBlink <= BLINK_DEAD_ZONE) return 0
+
+  const normalized = clamp(
+    (safeBlink - BLINK_DEAD_ZONE) / (1 - BLINK_DEAD_ZONE),
+  )
+  const eased = normalized * normalized * (3 - 2 * normalized)
+  return clamp(Math.pow(eased, 0.42) * 1.12)
 }
 
 export function createDragonMeshEyelidRig(
   root: Object3D,
-  bounds: Box3,
-  size: Vector3,
-  center: Vector3,
-  modelEyeY: number,
+  _bounds: Box3,
+  _size: Vector3,
+  _center: Vector3,
+  _modelEyeY: number,
 ): DragonMeshEyelidBinding[] {
-  // v7 moved the authored visible eye line upward compared with the earlier
-  // corrected mesh. Target that documented line explicitly so the fallback
-  // cannot drift into the muzzle while the model anchor remains unchanged.
-  const eyeY = bounds.min.y + size.y * V7_EYE_LINE_RATIO - modelEyeY
-  const leftEye: EyeRegion = {
-    x: -size.x * 0.17,
-    y: eyeY,
-    radiusX: size.x * 0.145,
-    radiusY: size.y * 0.105,
-    side: 'left',
-  }
-  const rightEye: EyeRegion = {
-    x: size.x * 0.17,
-    y: eyeY,
-    radiusX: size.x * 0.145,
-    radiusY: size.y * 0.105,
-    side: 'right',
-  }
-  const frontStart = -size.z * 0.05
-  const frontEnd = bounds.max.z - center.z
-  const centerGuard = size.x * 0.028
   const bindings: DragonMeshEyelidBinding[] = []
 
-  root.updateMatrixWorld(true)
   root.traverse((object) => {
-    if (!(object instanceof Mesh) || isDetachedEyeSurface(object)) return
+    if (!(object instanceof Mesh)) return
 
-    const geometry = object.geometry.clone()
-    const position = geometry.getAttribute('position')
-    if (!(position instanceof BufferAttribute) || position.itemSize < 3) {
-      geometry.dispose()
-      return
-    }
+    const dictionary = object.morphTargetDictionary
+    const influences = object.morphTargetInfluences
+    if (!dictionary || !influences) return
 
-    const vertexCount = position.count
-    const basePositions = new Float32Array(vertexCount * 3)
-    const leftDeltas = new Float32Array(vertexCount * 3)
-    const rightDeltas = new Float32Array(vertexCount * 3)
-    const inverseWorld = object.matrixWorld.clone().invert()
-    const localPosition = new Vector3()
-    const worldPosition = new Vector3()
-    let affectedVertices = 0
+    const leftIndex = resolveMorphIndex(dictionary, LEFT_BLINK_ALIASES)
+    const rightIndex = resolveMorphIndex(dictionary, RIGHT_BLINK_ALIASES)
+    if (leftIndex === undefined && rightIndex === undefined) return
 
-    for (let index = 0; index < vertexCount; index += 1) {
-      const offset = index * 3
-      localPosition.fromBufferAttribute(position, index)
-      basePositions[offset] = localPosition.x
-      basePositions[offset + 1] = localPosition.y
-      basePositions[offset + 2] = localPosition.z
-      worldPosition.copy(localPosition).applyMatrix4(object.matrixWorld)
-
-      const leftWeight = resolveDragonEyelidVertexWeight(
-        worldPosition.x,
-        worldPosition.y,
-        worldPosition.z,
-        leftEye,
-        frontStart,
-        frontEnd,
-        centerGuard,
-      )
-      const rightWeight = resolveDragonEyelidVertexWeight(
-        worldPosition.x,
-        worldPosition.y,
-        worldPosition.z,
-        rightEye,
-        frontStart,
-        frontEnd,
-        centerGuard,
-      )
-
-      if (leftWeight > 0.001) {
-        writeWeightedClosureDelta(
-          localPosition,
-          worldPosition,
-          inverseWorld,
-          leftEye,
-          leftWeight,
-          size,
-          leftDeltas,
-          offset,
-        )
-        affectedVertices += 1
-      }
-      if (rightWeight > 0.001) {
-        writeWeightedClosureDelta(
-          localPosition,
-          worldPosition,
-          inverseWorld,
-          rightEye,
-          rightWeight,
-          size,
-          rightDeltas,
-          offset,
-        )
-        affectedVertices += 1
-      }
-    }
-
-    if (affectedVertices === 0) {
-      geometry.dispose()
-      return
-    }
-
-    object.geometry = geometry
-    position.setUsage(DynamicDrawUsage)
+    const rigVersion = String(object.userData?.faceCamRigVersion ?? '')
+    const meshName = normalizedMorphName(object.name)
+    const isSelfTestRig = rigVersion === SELF_TEST_RIG_VERSION || meshName.includes('v7')
     bindings.push({
-      position,
-      basePositions,
-      leftDeltas,
-      rightDeltas,
-      lastLeft: -1,
-      lastRight: -1,
+      influences,
+      leftIndex,
+      rightIndex,
+      selfTestEnabled: isSelfTestRig,
+      selfTestStartedAt: null,
     })
   })
 
@@ -244,35 +121,20 @@ export function applyDragonMeshEyelidRig(
   blinkLeft: number,
   blinkRight: number,
 ): void {
-  const left = resolveDragonMeshBlink(blinkLeft)
-  const right = resolveDragonMeshBlink(blinkRight)
+  const now = nowMs()
+  const liveLeft = resolveNativeDragonBlinkInfluence(blinkLeft)
+  const liveRight = resolveNativeDragonBlinkInfluence(blinkRight)
 
   for (const binding of bindings) {
-    if (
-      Math.abs(left - binding.lastLeft) <= 0.004
-      && Math.abs(right - binding.lastRight) <= 0.004
-    ) {
-      continue
-    }
+    const selfTest = resolveSelfTestInfluence(binding, now)
+    const leftInfluence = Math.max(liveLeft, selfTest)
+    const rightInfluence = Math.max(liveRight, selfTest)
 
-    const vertexCount = binding.position.count
-    for (let index = 0; index < vertexCount; index += 1) {
-      const offset = index * 3
-      binding.position.setXYZ(
-        index,
-        binding.basePositions[offset]
-          + binding.leftDeltas[offset] * left
-          + binding.rightDeltas[offset] * right,
-        binding.basePositions[offset + 1]
-          + binding.leftDeltas[offset + 1] * left
-          + binding.rightDeltas[offset + 1] * right,
-        binding.basePositions[offset + 2]
-          + binding.leftDeltas[offset + 2] * left
-          + binding.rightDeltas[offset + 2] * right,
-      )
+    if (binding.leftIndex !== undefined) {
+      binding.influences[binding.leftIndex] = leftInfluence
     }
-    binding.position.needsUpdate = true
-    binding.lastLeft = left
-    binding.lastRight = right
+    if (binding.rightIndex !== undefined) {
+      binding.influences[binding.rightIndex] = rightInfluence
+    }
   }
 }

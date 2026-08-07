@@ -2,14 +2,13 @@
 import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-describe('v7 guarded mesh eyelid wiring', () => {
-  it('drives real eye-region geometry without routing blinks through GLB morphs', () => {
+describe('native v7 blink wiring', () => {
+  it('writes both eye signals directly to the GLB morph targets', () => {
     const source = fs.readFileSync('src/masks/three/StaticDragonRenderer.ts', 'utf8')
-    expect(source).toContain('createDragonMeshEyelidRig')
-    expect(source).toContain('applyDragonMeshEyelidRig')
-    expect(source).toContain('this.hasNativeBlink = false')
-    expect(source).not.toContain("this.setMorph(binding, 'blinkLeft', expression.blinkLeft)")
-    expect(source).not.toContain("this.setMorph(binding, 'blinkRight', expression.blinkRight)")
-    expect(source).toContain("this.setMorph(binding, 'jawOpen', expression.jawOpen)")
+    expect(source).toContain("this.hasNativeBlink = this.hasMorph('blinkLeft') && this.hasMorph('blinkRight')")
+    expect(source).toContain("this.setMorph(binding, 'blinkLeft', expression.blinkLeft)")
+    expect(source).toContain("this.setMorph(binding, 'blinkRight', expression.blinkRight)")
+    expect(source).not.toContain('applyDragonMeshEyelidRig')
+    expect(source).not.toContain('createDragonMeshEyelidRig')
   })
 })
