@@ -1,4 +1,4 @@
-import type { Object3D } from 'three'
+import { Mesh, type Object3D } from 'three'
 import type { DragonExpressionState } from './dragonExpressions'
 import { StaticDragonRenderer } from './StaticDragonRenderer'
 
@@ -6,24 +6,24 @@ const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
 
-// v18 never stretches the exterior mouth. The exact neutral lower jaw is a
-// separate rigid mesh that rotates around an anatomical hinge. The authored
-// open-source topology is cavity-only and is revealed behind the rigid jaw.
+// v18 keeps the exact neutral exterior and rotates its lower jaw as a rigid
+// object. The open-source topology is used only as hidden oral interior.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.08
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.03
 export const RIGID_JAW_HINGE_Y = 0.305
 export const RIGID_JAW_HINGE_Z = 0.145
 export const RIGID_JAW_MAX_ANGLE_RAD = 16 * Math.PI / 180
 
-// The cavity comes from the old open-mouth topology. Driving that topology at
-// the same gain as the rigid exterior jaw exposes too much of its lateral
-// teeth/cheek region and makes the mouth look wide and crooked. Keep the real
-// jaw rotation, but present the oral interior more conservatively and slightly
-// recessed behind the exact neutral lips.
-export const ORAL_CAVITY_MORPH_GAIN = 0.72
-export const ORAL_CAVITY_MORPH_MAX = 0.52
-export const ORAL_CAVITY_MIN_SCALE_X = 0.86
-export const ORAL_CAVITY_MAX_RECESS_Z = 0.024
+// These limits come from the validated v15 deep-cavity partition. v18 had
+// widened that region to almost the whole lower face (4,991 triangles), which
+// exposed cheek/lower-jaw fragments and lateral teeth behind the rigid jaw.
+// Keep only the deep, central oral region from the authored Abierto_Dragon
+// endpoint. A lower Y bound also removes chin/neck fragments that can never be
+// legitimate mouth interior.
+export const ORIGINAL_CAVITY_MAX_Z = 0.22
+export const ORIGINAL_CAVITY_MAX_ABS_X = 0.13
+export const ORIGINAL_CAVITY_MIN_Y = 0.22
+export const ORIGINAL_CAVITY_MAX_Y = 0.42
 
 interface RegionalHybridState {
   headRoot: Object3D
@@ -33,8 +33,6 @@ interface RegionalHybridState {
   neutralBaseY: number
   neutralBaseZ: number
   neutralBaseRotationX: number
-  openBaseZ: number
-  openBaseScaleX: number
 }
 
 interface RendererPrototype {
@@ -54,22 +52,105 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
 
-function smoothstep(edge0: number, edge1: number, value: number): number {
-  const amount = clamp01((value - edge0) / Math.max(0.0001, edge1 - edge0))
-  return amount * amount * (3 - 2 * amount)
+export function isOriginalOpenCavityCenter(x: number, y: number, z: number): boolean {
+  return (
+    z < ORIGINAL_CAVITY_MAX_Z
+    && Math.abs(x) < ORIGINAL_CAVITY_MAX_ABS_X
+    && y > ORIGINAL_CAVITY_MIN_Y
+    && y < ORIGINAL_CAVITY_MAX_Y
+  )
 }
 
-export function resolveOralCavityPresentation(
-  jawOpen: number,
-): { morphJaw: number; scaleX: number; recessZ: number } {
-  const jaw = clamp01(jawOpen)
-  const presentation = smoothstep(DUAL_TOPOLOGY_ENTER_JAW, 0.72, jaw)
+function bakeOriginalOpenEndpointInterior(root: Object3D): number {
+  let keptTriangles = 0
 
-  return {
-    morphJaw: Math.min(ORAL_CAVITY_MORPH_MAX, jaw * ORAL_CAVITY_MORPH_GAIN),
-    scaleX: 1 - (1 - ORAL_CAVITY_MIN_SCALE_X) * presentation,
-    recessZ: ORAL_CAVITY_MAX_RECESS_Z * presentation,
-  }
+  root.traverse((object) => {
+    const mesh = object as Mesh
+    if (!mesh.isMesh) return
+
+    const geometry = mesh.geometry
+    const position = geometry.getAttribute('position')
+    const index = geometry.getIndex()
+    const morphPosition = geometry.morphAttributes.position?.[0]
+    if (!position || !index || !morphPosition) return
+
+    const relative = geometry.morphTargetsRelative
+    const endpoint = (vertexIndex: number): [number, number, number] => {
+      const baseX = position.getX(vertexIndex)
+      const baseY = position.getY(vertexIndex)
+      const baseZ = position.getZ(vertexIndex)
+      const morphX = morphPosition.getX(vertexIndex)
+      const morphY = morphPosition.getY(vertexIndex)
+      const morphZ = morphPosition.getZ(vertexIndex)
+      return relative
+        ? [baseX + morphX, baseY + morphY, baseZ + morphZ]
+        : [morphX, morphY, morphZ]
+    }
+
+    const selectedIndices: number[] = []
+    for (let offset = 0; offset + 2 < index.count; offset += 3) {
+      const a = index.getX(offset)
+      const b = index.getX(offset + 1)
+      const c = index.getX(offset + 2)
+      const pa = endpoint(a)
+      const pb = endpoint(b)
+      const pc = endpoint(c)
+      const centerX = (pa[0] + pb[0] + pc[0]) / 3
+      const centerY = (pa[1] + pb[1] + pc[1]) / 3
+      const centerZ = (pa[2] + pb[2] + pc[2]) / 3
+
+      if (isOriginalOpenCavityCenter(centerX, centerY, centerZ)) {
+        selectedIndices.push(a, b, c)
+      }
+    }
+
+    if (selectedIndices.length === 0) return
+
+    // Bake the exact jawOpen=100% endpoint authored in Abierto_Dragon into the
+    // base position. We no longer interpolate the old open topology: the rigid
+    // neutral jaw controls aperture, and this fixed source geometry is merely
+    // revealed behind it. This removes the broken intermediate mouth shapes.
+    for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex += 1) {
+      const [x, y, z] = endpoint(vertexIndex)
+      position.setXYZ(vertexIndex, x, y, z)
+      morphPosition.setXYZ(vertexIndex, 0, 0, 0)
+    }
+    position.needsUpdate = true
+    morphPosition.needsUpdate = true
+
+    const normal = geometry.getAttribute('normal')
+    const morphNormal = geometry.morphAttributes.normal?.[0]
+    if (normal && morphNormal) {
+      for (let vertexIndex = 0; vertexIndex < normal.count; vertexIndex += 1) {
+        let x = relative
+          ? normal.getX(vertexIndex) + morphNormal.getX(vertexIndex)
+          : morphNormal.getX(vertexIndex)
+        let y = relative
+          ? normal.getY(vertexIndex) + morphNormal.getY(vertexIndex)
+          : morphNormal.getY(vertexIndex)
+        let z = relative
+          ? normal.getZ(vertexIndex) + morphNormal.getZ(vertexIndex)
+          : morphNormal.getZ(vertexIndex)
+        const length = Math.hypot(x, y, z)
+        if (length > 0.000001) {
+          x /= length
+          y /= length
+          z /= length
+        }
+        normal.setXYZ(vertexIndex, x, y, z)
+        morphNormal.setXYZ(vertexIndex, 0, 0, 0)
+      }
+      normal.needsUpdate = true
+      morphNormal.needsUpdate = true
+    }
+
+    geometry.setIndex(selectedIndices)
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
+    keptTriangles += selectedIndices.length / 3
+  })
+
+  return keptTriangles
 }
 
 export function resolveDualTopologyJaw(
@@ -84,7 +165,9 @@ export function resolveDualTopologyJaw(
 
   return {
     openActive,
-    morphJaw: resolveOralCavityPresentation(jaw).morphJaw,
+    // The oral interior is already baked at the authoritative original-open
+    // endpoint. It must never be morphed again.
+    morphJaw: 0,
     jawAngleRad: jaw * RIGID_JAW_MAX_ANGLE_RAD,
   }
 }
@@ -119,6 +202,13 @@ function installRegionalHybridRuntime(): void {
       return
     }
 
+    const cavityTriangles = bakeOriginalOpenEndpointInterior(openMouthRoot)
+    if (cavityTriangles === 0) {
+      states.delete(this)
+      openMouthRoot.visible = false
+      return
+    }
+
     headRoot.visible = true
     neutralMouthRoot.visible = true
     openMouthRoot.visible = false
@@ -130,8 +220,6 @@ function installRegionalHybridRuntime(): void {
       neutralBaseY: neutralMouthRoot.position.y,
       neutralBaseZ: neutralMouthRoot.position.z,
       neutralBaseRotationX: neutralMouthRoot.rotation.x,
-      openBaseZ: openMouthRoot.position.z,
-      openBaseScaleX: openMouthRoot.scale.x,
     })
   }
 
@@ -145,32 +233,24 @@ function installRegionalHybridRuntime(): void {
     }
 
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
-    const cavity = resolveOralCavityPresentation(expression.jawOpen)
     state.openActive = resolved.openActive
 
-    // Rotate the exact neutral lower jaw around the fixed hinge. Position is
-    // compensated so the hinge point itself stays stationary in local space.
+    // Rotate only the exact neutral lower jaw around the fixed hinge. The rest
+    // of the head and hocico never stretch with jawOpen.
     const pivotOffset = rigidJawPivotOffset(resolved.jawAngleRad)
     state.neutralMouthRoot.rotation.x = state.neutralBaseRotationX + resolved.jawAngleRad
     state.neutralMouthRoot.position.y = state.neutralBaseY + pivotOffset.y
     state.neutralMouthRoot.position.z = state.neutralBaseZ + pivotOffset.z
 
-    // Keep the authored cavity visually inside the exact neutral lip line.
-    // Narrowing only the cavity (never the exterior jaw) hides the lateral
-    // open-topology teeth that produced the wide/crooked mouth in live video.
-    state.openMouthRoot.scale.x = state.openBaseScaleX * cavity.scaleX
-    state.openMouthRoot.position.z = state.openBaseZ - cavity.recessZ
-
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = true
     state.openMouthRoot.visible = resolved.openActive
 
-    // Only the cavity owns jawOpen morphs in v18. Its morph is deliberately
-    // lower-gain than the rigid jaw rotation so the tongue/teeth stay natural
-    // while the exact exterior jaw still follows the user's opening.
+    // The original-open cavity is baked and fixed. Send jawOpen=0 through the
+    // native morph path so no legacy topology can deform it a second time.
     originalApplyExpression.call(this, {
       ...expression,
-      jawOpen: cavity.morphJaw,
+      jawOpen: 0,
     })
   }
 }

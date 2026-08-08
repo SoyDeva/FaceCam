@@ -132,6 +132,28 @@ describe('smoothStaticDragonPose', () => {
     expect(smoothed.jawOpen).toBeGreaterThan(0.45)
   })
 
+  it('does not stretch or pitch the dragon when jaw motion moves the chin landmark', () => {
+    const previous = {
+      ...estimateStaticDragonPose(resultWithLandmarks()),
+      jawOpen: 0,
+    }
+    const next = {
+      ...previous,
+      jawOpen: 0.8,
+      faceHeight: previous.faceHeight + 0.18,
+      neckAnchorX: previous.neckAnchorX + 0.04,
+      neckAnchorY: previous.neckAnchorY + 0.14,
+      pitch: previous.pitch + 0.2,
+    }
+    const smoothed = smoothStaticDragonPose(previous, next)
+
+    expect(smoothed.jawOpen).toBeGreaterThan(0.45)
+    expect(smoothed.faceHeight).toBe(previous.faceHeight)
+    expect(smoothed.neckAnchorX).toBe(previous.neckAnchorX)
+    expect(smoothed.neckAnchorY).toBe(previous.neckAnchorY)
+    expect(smoothed.pitch).toBe(previous.pitch)
+  })
+
   it('ignores weak eyelid noise but accepts a decisive blink', () => {
     const previous = {
       ...estimateStaticDragonPose(resultWithLandmarks()),

@@ -41,6 +41,8 @@ const LANDMARK = {
   noseTip: 1,
 } as const
 
+const JAW_POSE_LOCK_THRESHOLD = 0.08
+
 function invisiblePose(): StaticDragonPoseEstimate {
   return {
     visible: false,
@@ -183,6 +185,18 @@ export function smoothStaticDragonPose(
   const amount = clamp(alpha, 0, 1)
   const expression = smoothLiveAutoDragonExpression(previous, next, 0.36)
 
+  // MediaPipe's chin landmark moves down when the user opens the mouth. That
+  // motion is articulation, not a change in head size. The renderer derives
+  // vertical neck fit from faceHeight/neckAnchor, so accepting the moving chin
+  // here made the whole dragon stretch vertically while speaking. Freeze only
+  // the chin-derived pose dimensions while the jaw is active; eye/temple based
+  // translation, roll and yaw continue tracking normally.
+  const jawPoseLocked = Math.max(
+    previous.jawOpen,
+    next.jawOpen,
+    expression.jawOpen,
+  ) >= JAW_POSE_LOCK_THRESHOLD
+
   return {
     visible: true,
     centerX: stableLerp(previous.centerX, next.centerX, amount, 0.0015, 0.018),
@@ -191,16 +205,24 @@ export function smoothStaticDragonPose(
     eyeCenterY: stableLerp(previous.eyeCenterY, next.eyeCenterY, amount, 0.0015, 0.018),
     eyeDistance: stableLerp(previous.eyeDistance, next.eyeDistance, amount, 0.0012, 0.015),
     faceWidth: stableLerp(previous.faceWidth, next.faceWidth, amount, 0.002, 0.022),
-    faceHeight: stableLerp(previous.faceHeight, next.faceHeight, amount, 0.002, 0.022),
+    faceHeight: jawPoseLocked
+      ? previous.faceHeight
+      : stableLerp(previous.faceHeight, next.faceHeight, amount, 0.002, 0.022),
     foreheadX: stableLerp(previous.foreheadX, next.foreheadX, amount, 0.0018, 0.02),
     foreheadY: stableLerp(previous.foreheadY, next.foreheadY, amount, 0.0018, 0.02),
     chinX: stableLerp(previous.chinX, next.chinX, amount, 0.0018, 0.02),
     chinY: stableLerp(previous.chinY, next.chinY, amount, 0.0018, 0.02),
-    neckAnchorX: stableLerp(previous.neckAnchorX, next.neckAnchorX, amount, 0.002, 0.022),
-    neckAnchorY: stableLerp(previous.neckAnchorY, next.neckAnchorY, amount, 0.002, 0.022),
+    neckAnchorX: jawPoseLocked
+      ? previous.neckAnchorX
+      : stableLerp(previous.neckAnchorX, next.neckAnchorX, amount, 0.002, 0.022),
+    neckAnchorY: jawPoseLocked
+      ? previous.neckAnchorY
+      : stableLerp(previous.neckAnchorY, next.neckAnchorY, amount, 0.002, 0.022),
     roll: stableLerp(previous.roll, next.roll, amount, 0.01, 0.085),
     yaw: stableLerp(previous.yaw, next.yaw, amount, 0.012, 0.1),
-    pitch: stableLerp(previous.pitch, next.pitch, amount, 0.012, 0.1),
+    pitch: jawPoseLocked
+      ? previous.pitch
+      : stableLerp(previous.pitch, next.pitch, amount, 0.012, 0.1),
     ...expression,
   }
 }

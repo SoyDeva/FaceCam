@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   DUAL_TOPOLOGY_ENTER_JAW,
   DUAL_TOPOLOGY_EXIT_JAW,
-  ORAL_CAVITY_MAX_RECESS_Z,
-  ORAL_CAVITY_MIN_SCALE_X,
-  ORAL_CAVITY_MORPH_MAX,
+  ORIGINAL_CAVITY_MAX_ABS_X,
+  ORIGINAL_CAVITY_MAX_Y,
+  ORIGINAL_CAVITY_MAX_Z,
+  ORIGINAL_CAVITY_MIN_Y,
   RIGID_JAW_HINGE_Y,
   RIGID_JAW_HINGE_Z,
   RIGID_JAW_MAX_ANGLE_RAD,
+  isOriginalOpenCavityCenter,
   resolveDualTopologyJaw,
-  resolveOralCavityPresentation,
   rigidJawPivotOffset,
 } from './dualTopologyRuntime'
 
@@ -22,20 +23,18 @@ describe('resolveDualTopologyJaw', () => {
     })
   })
 
-  it('rotates the neutral jaw continuously before the cavity is revealed', () => {
+  it('rotates the rigid jaw continuously before the cavity is revealed', () => {
     const jaw = DUAL_TOPOLOGY_ENTER_JAW - 0.001
     const result = resolveDualTopologyJaw(jaw, false)
     expect(result.openActive).toBe(false)
-    expect(result.morphJaw).toBeGreaterThan(0)
-    expect(result.morphJaw).toBeLessThan(jaw)
+    expect(result.morphJaw).toBe(0)
     expect(result.jawAngleRad).toBeCloseTo(jaw * RIGID_JAW_MAX_ANGLE_RAD, 6)
   })
 
-  it('reveals the oral cavity only after a real opening', () => {
+  it('reveals the fixed original-open interior only after a real opening', () => {
     const result = resolveDualTopologyJaw(DUAL_TOPOLOGY_ENTER_JAW, false)
     expect(result.openActive).toBe(true)
-    expect(result.morphJaw).toBeGreaterThan(0)
-    expect(result.morphJaw).toBeLessThan(DUAL_TOPOLOGY_ENTER_JAW)
+    expect(result.morphJaw).toBe(0)
   })
 
   it('uses hysteresis only for cavity visibility', () => {
@@ -44,40 +43,31 @@ describe('resolveDualTopologyJaw', () => {
 
     const closed = resolveDualTopologyJaw(DUAL_TOPOLOGY_EXIT_JAW, true)
     expect(closed.openActive).toBe(false)
-    expect(closed.morphJaw).toBeGreaterThan(0)
+    expect(closed.morphJaw).toBe(0)
   })
 
-  it('uses the full rigid-jaw angle while clamping only the cavity morph', () => {
+  it('uses the full rigid-jaw angle without morphing the baked cavity', () => {
     const result = resolveDualTopologyJaw(1, true)
     expect(result.openActive).toBe(true)
-    expect(result.morphJaw).toBe(ORAL_CAVITY_MORPH_MAX)
+    expect(result.morphJaw).toBe(0)
     expect(result.jawAngleRad).toBeCloseTo(RIGID_JAW_MAX_ANGLE_RAD, 8)
   })
 })
 
-describe('resolveOralCavityPresentation', () => {
-  it('leaves the cavity transform neutral at rest', () => {
-    expect(resolveOralCavityPresentation(0)).toEqual({
-      morphJaw: 0,
-      scaleX: 1,
-      recessZ: 0,
-    })
+describe('original open-mouth cavity selection', () => {
+  it('keeps only a deep central mouth point', () => {
+    expect(isOriginalOpenCavityCenter(0, 0.32, 0.12)).toBe(true)
   })
 
-  it('keeps a conversational opening narrower and deeper than the exterior jaw', () => {
-    const cavity = resolveOralCavityPresentation(0.52)
-    expect(cavity.morphJaw).toBeLessThan(0.52)
-    expect(cavity.scaleX).toBeLessThan(0.94)
-    expect(cavity.scaleX).toBeGreaterThan(ORAL_CAVITY_MIN_SCALE_X)
-    expect(cavity.recessZ).toBeGreaterThan(0.012)
-    expect(cavity.recessZ).toBeLessThan(ORAL_CAVITY_MAX_RECESS_Z)
+  it('rejects lateral cheek and tooth fragments', () => {
+    expect(isOriginalOpenCavityCenter(ORIGINAL_CAVITY_MAX_ABS_X + 0.01, 0.32, 0.12)).toBe(false)
+    expect(isOriginalOpenCavityCenter(-ORIGINAL_CAVITY_MAX_ABS_X - 0.01, 0.32, 0.12)).toBe(false)
   })
 
-  it('never exposes the cavity beyond its safe full-open presentation', () => {
-    const cavity = resolveOralCavityPresentation(1)
-    expect(cavity.morphJaw).toBe(ORAL_CAVITY_MORPH_MAX)
-    expect(cavity.scaleX).toBeCloseTo(ORAL_CAVITY_MIN_SCALE_X, 8)
-    expect(cavity.recessZ).toBeCloseTo(ORAL_CAVITY_MAX_RECESS_Z, 8)
+  it('rejects front-face, chin and upper-muzzle fragments', () => {
+    expect(isOriginalOpenCavityCenter(0, 0.32, ORIGINAL_CAVITY_MAX_Z + 0.01)).toBe(false)
+    expect(isOriginalOpenCavityCenter(0, ORIGINAL_CAVITY_MIN_Y - 0.01, 0.12)).toBe(false)
+    expect(isOriginalOpenCavityCenter(0, ORIGINAL_CAVITY_MAX_Y + 0.01, 0.12)).toBe(false)
   })
 })
 
