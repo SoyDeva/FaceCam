@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v17.glb'
-const OFFICIAL_MODEL_SHA256 = 'f00e453c5d9ee386fed7c00ae8434ab4629e91a7f2b46ae92799dcb3117dd39a'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v18.glb'
+const OFFICIAL_MODEL_SHA256 = '30dafd747b12ce2f7e0556e854629f9ccb942cb9628c5c3fc1398f3aee0a5cd8'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v17 keeps the approved eye rig untouched and moves the exact neutral
-    // lower jaw continuously around a pinned anatomical hinge. The open-source
-    // topology is cavity-only, so no exterior mouth patch can detach.
+    // v18 freezes the approved eye rig and keeps the neutral upper face exact.
+    // The lower jaw is a rigid neutral mesh rotated by runtime; the open-source
+    // topology exists only as cavity material behind the opening.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó el rig continuo de mandíbula del Dragón Blanco v17.',
+        'El modelo guardado no activó el rig rígido de mandíbula del Dragón Blanco v18.',
       )
     }
   } finally {
@@ -50,7 +50,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco híbrido v17 de mandíbula continua.',
+      'El archivo no corresponde al Dragón Blanco híbrido v18 de mandíbula rígida.',
     )
   }
 
@@ -72,11 +72,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v17: ojos aprobados intactos y mandíbula neutral continua.')
+          setMessage('Instala el dragón v18: ojos aprobados intactos y mandíbula inferior rígida.')
           return
         }
 
-        setMessage('Verificando el GLB v17, los ojos congelados y la mandíbula continua…')
+        setMessage('Verificando el GLB v18, los ojos congelados y la mandíbula rígida…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -86,7 +86,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v17.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v18.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -98,7 +98,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v17 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v18 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -126,11 +126,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v17 sin modificar tu calibración…')
+    setMessage('Verificando el GLB v18 sin modificar tu calibración…')
 
     try {
       await install(file)
-      setMessage('Dragón v17 instalado. Reiniciando FaceCam para validar la mandíbula continua…')
+      setMessage('Dragón v18 instalado. Reiniciando FaceCam para validar la mandíbula rígida…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -165,7 +165,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco híbrido v17 · mandíbula continua
+        Dragón Blanco híbrido v18 · mandíbula rígida
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -187,7 +187,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v17'}
+            : 'Seleccionar dragón v18'}
       </button>
     </aside>
   )
