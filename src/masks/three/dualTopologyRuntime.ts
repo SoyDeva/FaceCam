@@ -5,13 +5,13 @@ import { StaticDragonRenderer } from './StaticDragonRenderer'
 const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
-const NEUTRAL_UPPER_MUZZLE_NODE_NAME = 'FaceCamNeutralUpperMuzzle'
+const UPPER_BRIDGE_NODE_NAME = 'FaceCamUpperMuzzleBridge'
 
-// v22 keeps the approved v20 lower mouth byte-for-byte and replaces only the
-// upper muzzle region that genuinely matches the authored Abierto_Dragon upper
-// source surface. Unlike v21, the switch no longer follows a horizontal Y cut:
-// the GLB retains a broad neutral overlap band around the source-matched patch,
-// preventing the saw-tooth seam seen under the hocico while open.
+// v23 abandons the v21/v22 cut-away strategy. The approved v20 head, eyes,
+// neutral mouth and authored Abierto_Dragon open mouth remain untouched. A
+// dedicated jawOpen-driven bridge is added only behind the upper source muzzle
+// so its attachment to the static head stays visually closed from front/profile
+// views without altering the approved lower mouth.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
@@ -20,7 +20,7 @@ interface SourceMouthState {
   headRoot: Object3D
   neutralMouthRoot: Object3D
   openMouthRoot: Object3D
-  neutralUpperMuzzleRoot: Object3D
+  upperBridgeRoot: Object3D
   openActive: boolean
 }
 
@@ -34,7 +34,7 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v22')
+const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v23')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -79,9 +79,9 @@ function installSourceMouthRuntime(): void {
     const headRoot = root?.getObjectByName(HEAD_NODE_NAME) ?? null
     const neutralMouthRoot = root?.getObjectByName(NEUTRAL_MOUTH_NODE_NAME) ?? null
     const openMouthRoot = root?.getObjectByName(OPEN_MOUTH_NODE_NAME) ?? null
-    const neutralUpperMuzzleRoot = root?.getObjectByName(NEUTRAL_UPPER_MUZZLE_NODE_NAME) ?? null
+    const upperBridgeRoot = root?.getObjectByName(UPPER_BRIDGE_NODE_NAME) ?? null
 
-    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !neutralUpperMuzzleRoot) {
+    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !upperBridgeRoot) {
       states.delete(this)
       return
     }
@@ -92,19 +92,19 @@ function installSourceMouthRuntime(): void {
     openMouthRoot.position.set(0, 0, 0)
     openMouthRoot.rotation.set(0, 0, 0)
     openMouthRoot.scale.set(1, 1, 1)
-    neutralUpperMuzzleRoot.position.set(0, 0, 0)
-    neutralUpperMuzzleRoot.rotation.set(0, 0, 0)
-    neutralUpperMuzzleRoot.scale.set(1, 1, 1)
+    upperBridgeRoot.position.set(0, 0, 0)
+    upperBridgeRoot.rotation.set(0, 0, 0)
+    upperBridgeRoot.scale.set(1, 1, 1)
 
     headRoot.visible = true
     neutralMouthRoot.visible = true
-    neutralUpperMuzzleRoot.visible = true
     openMouthRoot.visible = false
+    upperBridgeRoot.visible = false
     states.set(this, {
       headRoot,
       neutralMouthRoot,
       openMouthRoot,
-      neutralUpperMuzzleRoot,
+      upperBridgeRoot,
       openActive: false,
     })
   }
@@ -123,9 +123,12 @@ function installSourceMouthRuntime(): void {
 
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = !resolved.openActive
-    state.neutralUpperMuzzleRoot.visible = !resolved.openActive
     state.openMouthRoot.visible = resolved.openActive
+    state.upperBridgeRoot.visible = resolved.openActive
 
+    // The bridge carries its own `jawOpen` morph target, so the existing
+    // StaticDragonRenderer morph dispatcher drives it with the exact same
+    // value as the authored open-mouth source.
     originalApplyExpression.call(this, {
       ...expression,
       jawOpen: resolved.morphJaw,
