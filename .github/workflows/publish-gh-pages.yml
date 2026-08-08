@@ -56,7 +56,7 @@ jobs:
           obsolete='FaceCam-Dragon-Blanco-HYBRID-v17.glb'
           corrected='El modelo guardado no activó el rig rígido de mandíbula del Dragón Blanco v18.'
           model='FaceCam-Dragon-Blanco-HYBRID-v18.glb'
-          fingerprint='30dafd747b12ce2f7e0556e854629f9ccb942cb9628c5c3fc1398f3aee0a5cd8'
+          fingerprint='90ee293f8cbe4acaed94d08b7127eaafe512eabec3ce96ec8bc85fd5bc681e15'
           head='FaceCamHeadStatic'
           neutralMouth='FaceCamNeutralMouth'
           openMouth='FaceCamOpenMouth'
