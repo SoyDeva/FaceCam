@@ -50,34 +50,34 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v14 mouth-only installer bundle
+      - name: Verify GLB v15 refined mouth-only installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-HYBRID-v13.glb'
-          corrected='El modelo guardado no activó el rig mouth-only del Dragón Blanco v14.'
-          model='FaceCam-Dragon-Blanco-HYBRID-v14.glb'
-          fingerprint='1b1f6ec039578350c609b4af44926dd82d04e3e6d888524e2a530b2b0c1462b6'
+          obsolete='FaceCam-Dragon-Blanco-HYBRID-v14.glb'
+          corrected='El modelo guardado no activó el rig mouth-only refinado del Dragón Blanco v15.'
+          model='FaceCam-Dragon-Blanco-HYBRID-v15.glb'
+          fingerprint='81529fbcc4c47835116dfa9ae1b7d5f7c263c0deafbc29f0fca7f876cd542467'
           head='FaceCamHeadStatic'
           neutralMouth='FaceCamNeutralMouth'
           openMouth='FaceCamOpenMouth'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v13 con la región oral demasiado grande."
+            echo "::error::El paquete todavía solicita el GLB v14 con corte oral demasiado alto."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación mouth-only v14."
+            echo "::error::El paquete no contiene la validación mouth-only refinada v15."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB híbrido mouth-only v14 oficial."
+            echo "::error::El paquete no solicita el GLB híbrido mouth-only v15 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v14."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v15."
             exit 1
           fi
 

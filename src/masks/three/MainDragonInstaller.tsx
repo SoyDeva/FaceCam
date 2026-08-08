@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v14.glb'
-const OFFICIAL_MODEL_SHA256 = '1b1f6ec039578350c609b4af44926dd82d04e3e6d888524e2a530b2b0c1462b6'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v15.glb'
+const OFFICIAL_MODEL_SHA256 = '81529fbcc4c47835116dfa9ae1b7d5f7c263c0deafbc29f0fca7f876cd542467'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v14 preserves the approved v13 eye rig byte-for-byte. Only the mouth
-    // triangle partition changed: more exact neutral hocico stays static and
-    // the open-source mesh is limited to the oral/lower-jaw region.
+    // v15 keeps the approved v13 eye rig byte-for-byte. The exact neutral
+    // upper muzzle/lip stays permanent; only the lower jaw and deep oral cavity
+    // come from the authored open source.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó el rig mouth-only del Dragón Blanco v14.',
+        'El modelo guardado no activó el rig mouth-only refinado del Dragón Blanco v15.',
       )
     }
   } finally {
@@ -50,7 +50,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco híbrido mouth-only v14 de FaceCam.',
+      'El archivo no corresponde al Dragón Blanco híbrido mouth-only v15 de FaceCam.',
     )
   }
 
@@ -72,11 +72,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v14: ojos aprobados intactos y corrección exclusiva de la boca.')
+          setMessage('Instala el dragón v15: ojos aprobados intactos y boca abierta limitada a mandíbula/cavidad.')
           return
         }
 
-        setMessage('Verificando el GLB v14, los ojos congelados y la nueva región oral…')
+        setMessage('Verificando el GLB v15, los ojos congelados y la región oral refinada…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -86,7 +86,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido mouth-only v14.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido mouth-only v15.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -98,7 +98,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido mouth-only v14 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido mouth-only v15 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -126,11 +126,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v14 sin modificar tu calibración…')
+    setMessage('Verificando el GLB v15 sin modificar tu calibración…')
 
     try {
       await install(file)
-      setMessage('Dragón v14 instalado. Reiniciando FaceCam para validar la boca regional…')
+      setMessage('Dragón v15 instalado. Reiniciando FaceCam para validar la boca refinada…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -165,7 +165,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco híbrido mouth-only v14
+        Dragón Blanco híbrido mouth-only v15
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -187,7 +187,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v14'}
+            : 'Seleccionar dragón v15'}
       </button>
     </aside>
   )
