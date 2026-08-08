@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v26.glb'
-const OFFICIAL_MODEL_SHA256 = '1f2398dfdbc2ca8db0afeee1cdabe48812594bb0bfc18b15e16fb4240e1d7583'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v27.glb'
+const OFFICIAL_MODEL_SHA256 = '8a70cd93b518745f99ac12764c626a64bd1db996da9d32ccee51549a794fb0e8'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v26 never splices upper-mouth geometry. Closed state uses the complete
-    // approved v20 neutral; open state uses the complete authored Abierto_Dragon
-    // source with jawOpen plus transferred v20 blink morphs.
-    if (renderer.facialRigMode === 'static-model') {
+    // v27 has one complete Abierto_Dragon source topology with a neutral-close
+    // mouth morph plus both native eyelid morphs. There are no alternate mouth
+    // nodes to splice or switch at runtime.
+    if (renderer.facialRigMode !== 'native') {
       throw new Error(
-        'El modelo guardado no activó la arquitectura de fuentes completas del Dragón Blanco v26.',
+        'El modelo guardado no activó la malla única con cerrado neutro y ambos párpados del Dragón Blanco v27.',
       )
     }
   } finally {
@@ -50,7 +50,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco v26 con neutral v20 completo y Abierto_Dragon completo.',
+      'El archivo no corresponde al Dragón Blanco v27 de una sola malla derivada de Abierto_Dragon.glb.',
     )
   }
 
@@ -72,11 +72,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v26: neutral v20 completo y fuente Abierto_Dragon completa, sin costuras de hocico.')
+          setMessage('Instala el dragón v27: una sola malla Abierto_Dragon con cerrado neutro continuo y párpados nativos.')
           return
         }
 
-        setMessage('Verificando el GLB v26, las fuentes completas y los párpados en ambos estados…')
+        setMessage('Verificando el GLB v27, la malla única, el cerrado neutro y ambos párpados…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -86,7 +86,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v26.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v27.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -98,7 +98,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco v26 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco v27 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -126,11 +126,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v26 sin modificar tu calibración ni la lógica de tracking…')
+    setMessage('Verificando el GLB v27 sin modificar tu calibración ni la lógica de ojos…')
 
     try {
       await install(file)
-      setMessage('Dragón v26 instalado. Reiniciando FaceCam con fuentes completas y sin empalmes de hocico…')
+      setMessage('Dragón v27 instalado. Reiniciando FaceCam con una sola malla y apertura continua…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -165,7 +165,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco v26 · neutral completo ↔ abierto completo
+        Dragón Blanco v27 · una sola malla + cerrado neutro
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -187,7 +187,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v26'}
+            : 'Seleccionar dragón v27'}
       </button>
     </aside>
   )
