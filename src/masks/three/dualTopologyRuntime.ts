@@ -5,12 +5,14 @@ import { StaticDragonRenderer } from './StaticDragonRenderer'
 const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
+const NEUTRAL_UPPER_MUZZLE_NODE_NAME = 'FaceCamNeutralUpperMuzzle'
 
-// v20 keeps the authored v19 source-mouth behavior, but the GLB now places a
-// four-ring neutral seam collar permanently in the static head. That collar
-// backs the lateral cheek/comissure attachment while the original open-mouth
-// topology is visible, so profile views do not expose black holes. Runtime must
-// not transform either source mesh: all seam work is authored into the GLB.
+// v21 freezes the approved v20 lower mouth completely. The only new behavior
+// is an upper-hocico source switch: 321 neutral collar triangles are separated
+// into their own closed-only node. When the mouth opens that node disappears,
+// allowing the authored Abierto_Dragon upper lip/hocico to become visible.
+// Lower mouth geometry, the permanent lateral seam collar, tracking and eye
+// behavior are unchanged from v20.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
@@ -19,6 +21,7 @@ interface SourceMouthState {
   headRoot: Object3D
   neutralMouthRoot: Object3D
   openMouthRoot: Object3D
+  neutralUpperMuzzleRoot: Object3D
   openActive: boolean
 }
 
@@ -32,7 +35,7 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v20')
+const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v21')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -53,10 +56,6 @@ export function resolveDualTopologyJaw(
     return { openActive: false, morphJaw: 0 }
   }
 
-  // The open topology has an intentionally non-neutral base. Never expose its
-  // artificial rest state. Enter directly on the authored opening trajectory,
-  // then map the remaining live range smoothly to the exact original full-open
-  // endpoint at jawOpen=1.
   const progress = clamp01(
     (jaw - DUAL_TOPOLOGY_ENTER_JAW) / (1 - DUAL_TOPOLOGY_ENTER_JAW),
   )
@@ -81,8 +80,9 @@ function installSourceMouthRuntime(): void {
     const headRoot = root?.getObjectByName(HEAD_NODE_NAME) ?? null
     const neutralMouthRoot = root?.getObjectByName(NEUTRAL_MOUTH_NODE_NAME) ?? null
     const openMouthRoot = root?.getObjectByName(OPEN_MOUTH_NODE_NAME) ?? null
+    const neutralUpperMuzzleRoot = root?.getObjectByName(NEUTRAL_UPPER_MUZZLE_NODE_NAME) ?? null
 
-    if (!headRoot || !neutralMouthRoot || !openMouthRoot) {
+    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !neutralUpperMuzzleRoot) {
       states.delete(this)
       return
     }
@@ -93,14 +93,19 @@ function installSourceMouthRuntime(): void {
     openMouthRoot.position.set(0, 0, 0)
     openMouthRoot.rotation.set(0, 0, 0)
     openMouthRoot.scale.set(1, 1, 1)
+    neutralUpperMuzzleRoot.position.set(0, 0, 0)
+    neutralUpperMuzzleRoot.rotation.set(0, 0, 0)
+    neutralUpperMuzzleRoot.scale.set(1, 1, 1)
 
     headRoot.visible = true
     neutralMouthRoot.visible = true
+    neutralUpperMuzzleRoot.visible = true
     openMouthRoot.visible = false
     states.set(this, {
       headRoot,
       neutralMouthRoot,
       openMouthRoot,
+      neutralUpperMuzzleRoot,
       openActive: false,
     })
   }
@@ -117,10 +122,12 @@ function installSourceMouthRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
-    // HeadRoot already contains the permanent neutral seam collar in v20.
-    // Only the central neutral mouth swaps with the authored open source.
+    // v21 contract: the v20 lower/lateral construction is untouched. Only the
+    // central upper neutral muzzle swaps out when the original open source is
+    // active. At rest all neutral pieces are visible, reproducing v20 exactly.
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = !resolved.openActive
+    state.neutralUpperMuzzleRoot.visible = !resolved.openActive
     state.openMouthRoot.visible = resolved.openActive
 
     originalApplyExpression.call(this, {
