@@ -50,34 +50,34 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v16 full lower-jaw installer bundle
+      - name: Verify GLB v17 continuous jaw installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-HYBRID-v15.glb'
-          corrected='El modelo guardado no activó el rig de mandíbula completa del Dragón Blanco v16.'
-          model='FaceCam-Dragon-Blanco-HYBRID-v16.glb'
-          fingerprint='226d25cdc79f2fbf7fa6a3ca94d0074098c03d03577d76b069c70c1530e51618'
+          obsolete='FaceCam-Dragon-Blanco-HYBRID-v16.glb'
+          corrected='El modelo guardado no activó el rig continuo de mandíbula del Dragón Blanco v17.'
+          model='FaceCam-Dragon-Blanco-HYBRID-v17.glb'
+          fingerprint='f00e453c5d9ee386fed7c00ae8434ab4629e91a7f2b46ae92799dcb3117dd39a'
           head='FaceCamHeadStatic'
           neutralMouth='FaceCamNeutralMouth'
           openMouth='FaceCamOpenMouth'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v15 con la mandíbula neutral ocluyendo la apertura."
+            echo "::error::El paquete todavía solicita el GLB v16 de mandíbula separada."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación de mandíbula completa v16."
+            echo "::error::El paquete no contiene la validación de mandíbula continua v17."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB híbrido mouth-only v16 oficial."
+            echo "::error::El paquete no solicita el GLB híbrido v17 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v16."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v17."
             exit 1
           fi
 
