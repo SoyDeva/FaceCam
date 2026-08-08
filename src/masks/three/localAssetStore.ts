@@ -11,7 +11,7 @@ const MODEL_STORE = 'models'
 const WHITE_DRAGON_KEY = 'white-dragon-medium'
 const CALIBRATION_KEY = 'facecam:white-dragon-calibration:v2'
 const HEAD_CALIBRATION_KEY = 'facecam:white-dragon-head-calibration:v1'
-const EXPRESSION_CALIBRATION_KEY = 'facecam:white-dragon-expression-calibration:v1'
+const EXPRESSION_CALIBRATION_KEY = 'facecam:white-dragon-expression-calibration:v2'
 
 interface StoredDragonModel {
   id: typeof WHITE_DRAGON_KEY
@@ -87,7 +87,7 @@ function runTransaction<T>(
       safeReject(transaction.error ?? new Error('Falló la operación de almacenamiento local.'))
     }
     transaction.onabort = () => {
-      safeReject(transaction.error ?? new Error('La operación de almacenamiento local fue cancelada.'))
+      safeReject(transaction.error ?? new Error('La operación local fue cancelada.'))
     }
 
     operation(store, setResult, safeReject)
