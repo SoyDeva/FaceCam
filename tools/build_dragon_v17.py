@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, hashlib, json, struct
+import argparse, hashlib, json, math, struct
 from pathlib import Path
 from collections import deque
 import numpy as np
@@ -41,20 +41,11 @@ def normals(pos,faces):
  n=np.zeros_like(pos,dtype=np.float64); tri=pos[faces]; fn=np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0])
  for k in range(3): np.add.at(n,faces[:,k],fn)
  l=np.linalg.norm(n,axis=1); good=l>1e-12; n[good]/=l[good,None]; return n.astype(np.float32)
-def transfer_field(target_pts, source_pts, source_delta, k=12, sigma=.10, block=128):
- out=np.zeros_like(target_pts,dtype=np.float32)
- for st in range(0,len(target_pts),block):
-  p=target_pts[st:st+block]
-  ds=((p[:,None,:]-source_pts[None,:,:])**2).sum(2)
-  kk=min(k,source_pts.shape[0]); ix=np.argpartition(ds,kk-1,axis=1)[:,:kk]
-  d=np.sqrt(np.take_along_axis(ds,ix,axis=1))
-  w=np.exp(-((d/sigma)**2))+1e-8
-  vals=source_delta[ix]
-  out[st:st+len(p)]=(vals*w[...,None]).sum(1)/w.sum(1)[:,None]
- return out
 
 def main():
- ap=argparse.ArgumentParser(); ap.add_argument('--v13',required=True); ap.add_argument('--out',required=True); ap.add_argument('--cavity-max-z',type=float,default=.36); ap.add_argument('--cavity-max-abs-x',type=float,default=.205); ap.add_argument('--cavity-max-y',type=float,default=.445); args=ap.parse_args()
+ ap=argparse.ArgumentParser(); ap.add_argument('--v13',required=True); ap.add_argument('--out',required=True)
+ ap.add_argument('--hinge-y',type=float,default=.32); ap.add_argument('--hinge-z',type=float,default=.20); ap.add_argument('--jaw-angle-deg',type=float,default=35.0)
+ ap.add_argument('--cavity-max-z',type=float,default=.36); ap.add_argument('--cavity-max-abs-x',type=float,default=.205); ap.add_argument('--cavity-max-y',type=float,default=.445); args=ap.parse_args()
  doc,b=read_glb(args.v13)
  neutral=accessor_view(doc,b,8).copy(); base_norm=accessor_view(doc,b,9).copy(); head=accessor_view(doc,b,3).reshape(-1).astype(np.uint32).reshape(-1,3); mouth=accessor_view(doc,b,11).reshape(-1).astype(np.uint32).reshape(-1,3)
  open_base=accessor_view(doc,b,12).copy(); open_delta=accessor_view(doc,b,16).copy(); open_end=open_base+open_delta; open_faces=accessor_view(doc,b,15).reshape(-1).astype(np.uint32).reshape(-1,3)
@@ -69,20 +60,20 @@ def main():
   v=q.popleft(); nd=rings[v]+1
   for u in adj[v]:
    if nd<rings[u]:rings[u]=nd;q.append(u)
- mag=np.linalg.norm(open_delta,axis=1); src=np.where(mag>0.002)[0]
- interp=transfer_field(neutral[mv],open_base[src],open_delta[src],k=12,sigma=.10)
+ pts=neutral[mv]; theta=math.radians(args.jaw_angle_deg); c=math.cos(theta); s=math.sin(theta)
+ yy=pts[:,1]-args.hinge_y; zz=pts[:,2]-args.hinge_z
+ rotated=np.stack([pts[:,0], args.hinge_y+c*yy-s*zz, args.hinge_z+s*yy+c*zz],axis=1).astype(np.float32)
  ring=np.array([rings[int(v)] for v in mv],dtype=np.float32); seam_w=np.clip(ring/6.0,0,1)
- y=neutral[mv,1]; t=np.clip((.43-y)/(.43-.31),0,1); y_w=t*t*(3-2*t)
- z=neutral[mv,2]; z_w=np.clip((z+.05)/.22,.25,1.0)
- weight=seam_w*y_w*z_w
- jaw=np.zeros_like(neutral,dtype=np.float32); jaw[mv]=interp*weight[:,None]; jaw[seam]=0
+ y=pts[:,1]; t=np.clip((.43-y)/(.43-.31),0,1); y_w=t*t*(3-2*t)
+ z=pts[:,2]; z_w=np.clip((z+.05)/.22,.25,1.0); weight=seam_w*y_w*z_w
+ jaw=np.zeros_like(neutral,dtype=np.float32); jaw[mv]=(rotated-pts)*weight[:,None]; jaw[seam]=0
  full_faces=np.vstack([head,mouth]); morphed=neutral+jaw; new_norm=normals(morphed,full_faces); normal_delta=new_norm-base_norm; normal_delta[seam]=0
  jaw_pos_accessor=append_vec3(doc,b,jaw); jaw_norm_accessor=append_vec3(doc,b,normal_delta)
- mesh1=doc['meshes'][1]; mesh1['weights']=[0]; mesh1.setdefault('extras',{})['targetNames']=['jawOpen']; mesh1['extras'].update({'faceCamRole':'neutral-mouth','faceCamJawTransfer':'authored-field-continuous','faceCamSeamPinnedVertices':int(len(seam))}); mesh1['primitives'][0]['targets']=[{'POSITION':jaw_pos_accessor,'NORMAL':jaw_norm_accessor}]; mesh1['name']='FaceCam_NeutralJaw_v17'
+ mesh1=doc['meshes'][1]; mesh1['weights']=[0]; mesh1.setdefault('extras',{})['targetNames']=['jawOpen']; mesh1['extras'].update({'faceCamRole':'neutral-mouth','faceCamJawTransfer':'hinge-continuous','faceCamSeamPinnedVertices':int(len(seam)),'faceCamHingeY':args.hinge_y,'faceCamHingeZ':args.hinge_z,'faceCamJawAngleDeg':args.jaw_angle_deg}); mesh1['primitives'][0]['targets']=[{'POSITION':jaw_pos_accessor,'NORMAL':jaw_norm_accessor}]; mesh1['name']='FaceCam_NeutralJaw_v17'
  tri=open_end[open_faces]; cen=tri.mean(1); cavity=(cen[:,2]<args.cavity_max_z)&(np.abs(cen[:,0])<args.cavity_max_abs_x)&(cen[:,1]<args.cavity_max_y); cavity_faces=open_faces[cavity]; append_indices(doc,b,15,cavity_faces)
  mesh2=doc['meshes'][2]; mesh2['name']='FaceCam_OralCavity_v17'; mesh2.setdefault('extras',{}).update({'faceCamRole':'open-mouth','faceCamCavityOnly':True,'faceCamCavityMaxZ':args.cavity_max_z,'faceCamCavityMaxAbsX':args.cavity_max_abs_x,'faceCamCavityMaxY':args.cavity_max_y})
  if len(doc.get('materials',[]))>1: doc['materials'][1]['doubleSided']=True
- doc.setdefault('asset',{}).setdefault('extras',{}).update({'faceCamRigVersion':17,'faceCamMouthOnlyRevision':'continuous-neutral-jaw-plus-cavity','faceCamEyesFrozenFrom':'v13','faceCamEyeAccessorHashes':eye_hashes})
+ doc.setdefault('asset',{}).setdefault('extras',{}).update({'faceCamRigVersion':17,'faceCamMouthOnlyRevision':'continuous-neutral-hinge-jaw-plus-cavity','faceCamEyesFrozenFrom':'v13','faceCamEyeAccessorHashes':eye_hashes})
  write_glb(doc,b,args.out)
  d2,b2=read_glb(args.out); after=[hashlib.sha256(accessor_view(d2,b2,i).tobytes()).hexdigest() for i in (4,5,6,7)]; assert after==eye_hashes
  print('neutral mouth faces',len(mouth),'seam pinned',len(seam),'jaw nonzero',int((np.linalg.norm(jaw,axis=1)>1e-5).sum())); print('jaw delta max',float(np.linalg.norm(jaw,axis=1).max()),'cavity faces',len(cavity_faces)); print('eyes unchanged',after==eye_hashes); print('sha256',hashlib.sha256(Path(args.out).read_bytes()).hexdigest())
