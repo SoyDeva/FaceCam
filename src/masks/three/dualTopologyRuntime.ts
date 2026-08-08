@@ -6,18 +6,23 @@ const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
 
-// v17 keeps the exact neutral outer mouth visible at every jaw value and
-// deforms that same topology continuously with jawOpen. The open-source mesh is
-// no longer an exterior replacement; it is only the oral cavity behind the
-// lips/jaw. Hysteresis therefore controls cavity visibility only.
+// v18 never stretches the exterior mouth. The exact neutral lower jaw is a
+// separate rigid mesh that rotates around an anatomical hinge. The authored
+// open-source topology is cavity-only and is revealed behind the rigid jaw.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.08
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.03
+export const RIGID_JAW_HINGE_Y = 0.305
+export const RIGID_JAW_HINGE_Z = 0.145
+export const RIGID_JAW_MAX_ANGLE_RAD = 16 * Math.PI / 180
 
 interface RegionalHybridState {
   headRoot: Object3D
   neutralMouthRoot: Object3D
   openMouthRoot: Object3D
   openActive: boolean
+  neutralBaseY: number
+  neutralBaseZ: number
+  neutralBaseRotationX: number
 }
 
 interface RendererPrototype {
@@ -30,22 +35,34 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, RegionalHybridState>()
-const patchMarker = Symbol.for('facecam.regionalHybridRuntime.v17')
+const patchMarker = Symbol.for('facecam.regionalHybridRuntime.v18')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 export function resolveDualTopologyJaw(
   jawOpen: number,
   wasOpen: boolean,
-): { openActive: boolean; morphJaw: number } {
+): { openActive: boolean; morphJaw: number; jawAngleRad: number } {
   const jaw = Math.min(1, Math.max(0, jawOpen))
   let openActive = wasOpen
 
   if (!openActive && jaw >= DUAL_TOPOLOGY_ENTER_JAW) openActive = true
   if (openActive && jaw <= DUAL_TOPOLOGY_EXIT_JAW) openActive = false
 
-  // The outer neutral jaw now owns its native transferred jawOpen morph, so it
-  // must receive the real continuous value even while the cavity is hidden.
-  return { openActive, morphJaw: jaw }
+  return {
+    openActive,
+    morphJaw: jaw,
+    jawAngleRad: jaw * RIGID_JAW_MAX_ANGLE_RAD,
+  }
+}
+
+export function rigidJawPivotOffset(angleRad: number): { y: number; z: number } {
+  const cosine = Math.cos(angleRad)
+  const sine = Math.sin(angleRad)
+
+  return {
+    y: RIGID_JAW_HINGE_Y * (1 - cosine) + RIGID_JAW_HINGE_Z * sine,
+    z: RIGID_JAW_HINGE_Z * (1 - cosine) - RIGID_JAW_HINGE_Y * sine,
+  }
 }
 
 function installRegionalHybridRuntime(): void {
@@ -76,6 +93,9 @@ function installRegionalHybridRuntime(): void {
       neutralMouthRoot,
       openMouthRoot,
       openActive: false,
+      neutralBaseY: neutralMouthRoot.position.y,
+      neutralBaseZ: neutralMouthRoot.position.z,
+      neutralBaseRotationX: neutralMouthRoot.rotation.x,
     })
   }
 
@@ -91,13 +111,19 @@ function installRegionalHybridRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
-    // v17: head + neutral outer jaw are always present. Only the deep cavity is
-    // conditionally revealed behind them. This removes the topology seam that
-    // produced the detached/serrated mouths in v13-v16.
+    // Rotate the exact neutral lower jaw around the fixed hinge. Position is
+    // compensated so the hinge point itself stays stationary in local space.
+    const pivotOffset = rigidJawPivotOffset(resolved.jawAngleRad)
+    state.neutralMouthRoot.rotation.x = state.neutralBaseRotationX + resolved.jawAngleRad
+    state.neutralMouthRoot.position.y = state.neutralBaseY + pivotOffset.y
+    state.neutralMouthRoot.position.z = state.neutralBaseZ + pivotOffset.z
+
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = true
     state.openMouthRoot.visible = resolved.openActive
 
+    // Only the cavity owns jawOpen morphs in v18. The exterior neutral jaw is
+    // moved rigidly above, so the renderer cannot stretch the hocico again.
     originalApplyExpression.call(this, {
       ...expression,
       jawOpen: resolved.morphJaw,
