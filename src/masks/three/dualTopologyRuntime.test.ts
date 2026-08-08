@@ -1,51 +1,54 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DUAL_TOPOLOGY_ENTER_JAW,
-  DUAL_TOPOLOGY_EXIT_JAW,
-  DUAL_TOPOLOGY_OPEN_MORPH_START,
-  resolveDualTopologyJaw,
+  SINGLE_SOURCE_JAW_DEADZONE,
+  SINGLE_SOURCE_JAW_FULL,
+  SINGLE_SOURCE_RENDERER_JAW_GAIN,
+  resolveSingleSourceJaw,
 } from './dualTopologyRuntime'
 
-describe('resolveDualTopologyJaw v26 complete-source contract', () => {
-  it('keeps the complete approved v20 neutral visible at rest', () => {
-    expect(resolveDualTopologyJaw(0, false)).toEqual({
-      openActive: false,
-      morphJaw: 0,
+describe('resolveSingleSourceJaw v27 one-topology contract', () => {
+  it('holds the neutral-close morph fully at rest', () => {
+    const result = resolveSingleSourceJaw(0)
+    expect(result.openAmount).toBe(0)
+    expect(result.closeWeight).toBe(1)
+    expect(result.rendererJawValue * SINGLE_SOURCE_RENDERER_JAW_GAIN).toBeCloseTo(1, 8)
+  })
+
+  it('keeps detector noise inside the mouth deadzone fully closed', () => {
+    const result = resolveSingleSourceJaw(SINGLE_SOURCE_JAW_DEADZONE)
+    expect(result.openAmount).toBe(0)
+    expect(result.closeWeight).toBe(1)
+  })
+
+  it('opens continuously without any topology threshold or hysteresis', () => {
+    const low = resolveSingleSourceJaw(0.18)
+    const middle = resolveSingleSourceJaw(0.34)
+    const high = resolveSingleSourceJaw(0.52)
+
+    expect(low.openAmount).toBeGreaterThan(0)
+    expect(middle.openAmount).toBeGreaterThan(low.openAmount)
+    expect(high.openAmount).toBeGreaterThan(middle.openAmount)
+    expect(low.closeWeight).toBeGreaterThan(middle.closeWeight)
+    expect(middle.closeWeight).toBeGreaterThan(high.closeWeight)
+  })
+
+  it('maps the live automatic jaw ceiling to the exact authored open source', () => {
+    const result = resolveSingleSourceJaw(SINGLE_SOURCE_JAW_FULL)
+    expect(result.openAmount).toBe(1)
+    expect(result.closeWeight).toBe(0)
+    expect(result.rendererJawValue).toBe(0)
+  })
+
+  it('also keeps renderer-rig-test jawOpen=1 at the exact open endpoint', () => {
+    expect(resolveSingleSourceJaw(1)).toEqual({
+      openAmount: 1,
+      closeWeight: 0,
+      rendererJawValue: 0,
     })
-    expect(resolveDualTopologyJaw(DUAL_TOPOLOGY_ENTER_JAW - 0.001, false)).toEqual({
-      openActive: false,
-      morphJaw: 0,
-    })
   })
 
-  it('switches to the complete authored source only after a real opening', () => {
-    const result = resolveDualTopologyJaw(DUAL_TOPOLOGY_ENTER_JAW, false)
-    expect(result.openActive).toBe(true)
-    expect(result.morphJaw).toBeCloseTo(DUAL_TOPOLOGY_OPEN_MORPH_START, 8)
-  })
-
-  it('uses hysteresis so complete topologies cannot chatter on tracking noise', () => {
-    const stillOpen = resolveDualTopologyJaw(DUAL_TOPOLOGY_EXIT_JAW + 0.01, true)
-    expect(stillOpen.openActive).toBe(true)
-    expect(stillOpen.morphJaw).toBeGreaterThanOrEqual(DUAL_TOPOLOGY_OPEN_MORPH_START)
-
-    const closed = resolveDualTopologyJaw(DUAL_TOPOLOGY_EXIT_JAW, true)
-    expect(closed).toEqual({ openActive: false, morphJaw: 0 })
-  })
-
-  it('reaches the exact authored Abierto_Dragon endpoint at full opening', () => {
-    expect(resolveDualTopologyJaw(1, true)).toEqual({ openActive: true, morphJaw: 1 })
-  })
-
-  it('keeps conversational openings below the full-open endpoint', () => {
-    const result = resolveDualTopologyJaw(0.55, true)
-    expect(result.openActive).toBe(true)
-    expect(result.morphJaw).toBeGreaterThan(DUAL_TOPOLOGY_OPEN_MORPH_START)
-    expect(result.morphJaw).toBeLessThan(0.75)
-  })
-
-  it('clamps malformed jaw values without changing the full-source contract', () => {
-    expect(resolveDualTopologyJaw(-1, false)).toEqual({ openActive: false, morphJaw: 0 })
-    expect(resolveDualTopologyJaw(2, true)).toEqual({ openActive: true, morphJaw: 1 })
+  it('clamps malformed values without changing the single-source endpoints', () => {
+    expect(resolveSingleSourceJaw(-1).closeWeight).toBe(1)
+    expect(resolveSingleSourceJaw(2).closeWeight).toBe(0)
   })
 })
