@@ -8,7 +8,7 @@ import {
 } from './localAssetStore'
 
 const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v17.glb'
-const OFFICIAL_MODEL_SHA256 = 'd2f47a58a6ddb5b355b61e16d38f08ac86e54d58af45a5ed1c3a055d6249553b'
+const OFFICIAL_MODEL_SHA256 = 'f00e453c5d9ee386fed7c00ae8434ab4629e91a7f2b46ae92799dcb3117dd39a'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -34,8 +34,8 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
     await renderer.load(blob)
 
     // v17 keeps the approved eye rig untouched and moves the exact neutral
-    // lower jaw continuously. The open-source topology is cavity-only, so no
-    // exterior mouth patch can detach from the face.
+    // lower jaw continuously around a pinned anatomical hinge. The open-source
+    // topology is cavity-only, so no exterior mouth patch can detach.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
         'El modelo guardado no activó el rig continuo de mandíbula del Dragón Blanco v17.',
