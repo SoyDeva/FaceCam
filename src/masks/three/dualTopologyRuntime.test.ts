@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   DUAL_TOPOLOGY_ENTER_JAW,
   DUAL_TOPOLOGY_EXIT_JAW,
+  ORAL_CAVITY_MAX_RECESS_Z,
+  ORAL_CAVITY_MIN_SCALE_X,
+  ORAL_CAVITY_MORPH_MAX,
   RIGID_JAW_HINGE_Y,
   RIGID_JAW_HINGE_Z,
   RIGID_JAW_MAX_ANGLE_RAD,
   resolveDualTopologyJaw,
+  resolveOralCavityPresentation,
   rigidJawPivotOffset,
 } from './dualTopologyRuntime'
 
@@ -22,14 +26,16 @@ describe('resolveDualTopologyJaw', () => {
     const jaw = DUAL_TOPOLOGY_ENTER_JAW - 0.001
     const result = resolveDualTopologyJaw(jaw, false)
     expect(result.openActive).toBe(false)
-    expect(result.morphJaw).toBeCloseTo(jaw, 6)
+    expect(result.morphJaw).toBeGreaterThan(0)
+    expect(result.morphJaw).toBeLessThan(jaw)
     expect(result.jawAngleRad).toBeCloseTo(jaw * RIGID_JAW_MAX_ANGLE_RAD, 6)
   })
 
   it('reveals the oral cavity only after a real opening', () => {
     const result = resolveDualTopologyJaw(DUAL_TOPOLOGY_ENTER_JAW, false)
     expect(result.openActive).toBe(true)
-    expect(result.morphJaw).toBeCloseTo(DUAL_TOPOLOGY_ENTER_JAW, 6)
+    expect(result.morphJaw).toBeGreaterThan(0)
+    expect(result.morphJaw).toBeLessThan(DUAL_TOPOLOGY_ENTER_JAW)
   })
 
   it('uses hysteresis only for cavity visibility', () => {
@@ -38,14 +44,40 @@ describe('resolveDualTopologyJaw', () => {
 
     const closed = resolveDualTopologyJaw(DUAL_TOPOLOGY_EXIT_JAW, true)
     expect(closed.openActive).toBe(false)
-    expect(closed.morphJaw).toBeCloseTo(DUAL_TOPOLOGY_EXIT_JAW, 6)
+    expect(closed.morphJaw).toBeGreaterThan(0)
   })
 
-  it('uses the full rigid-jaw angle at 100%', () => {
+  it('uses the full rigid-jaw angle while clamping only the cavity morph', () => {
     const result = resolveDualTopologyJaw(1, true)
     expect(result.openActive).toBe(true)
-    expect(result.morphJaw).toBe(1)
+    expect(result.morphJaw).toBe(ORAL_CAVITY_MORPH_MAX)
     expect(result.jawAngleRad).toBeCloseTo(RIGID_JAW_MAX_ANGLE_RAD, 8)
+  })
+})
+
+describe('resolveOralCavityPresentation', () => {
+  it('leaves the cavity transform neutral at rest', () => {
+    expect(resolveOralCavityPresentation(0)).toEqual({
+      morphJaw: 0,
+      scaleX: 1,
+      recessZ: 0,
+    })
+  })
+
+  it('keeps a conversational opening narrower and deeper than the exterior jaw', () => {
+    const cavity = resolveOralCavityPresentation(0.52)
+    expect(cavity.morphJaw).toBeLessThan(0.52)
+    expect(cavity.scaleX).toBeLessThan(0.94)
+    expect(cavity.scaleX).toBeGreaterThan(ORAL_CAVITY_MIN_SCALE_X)
+    expect(cavity.recessZ).toBeGreaterThan(0.012)
+    expect(cavity.recessZ).toBeLessThan(ORAL_CAVITY_MAX_RECESS_Z)
+  })
+
+  it('never exposes the cavity beyond its safe full-open presentation', () => {
+    const cavity = resolveOralCavityPresentation(1)
+    expect(cavity.morphJaw).toBe(ORAL_CAVITY_MORPH_MAX)
+    expect(cavity.scaleX).toBeCloseTo(ORAL_CAVITY_MIN_SCALE_X, 8)
+    expect(cavity.recessZ).toBeCloseTo(ORAL_CAVITY_MAX_RECESS_Z, 8)
   })
 })
 

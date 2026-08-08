@@ -15,6 +15,16 @@ export const RIGID_JAW_HINGE_Y = 0.305
 export const RIGID_JAW_HINGE_Z = 0.145
 export const RIGID_JAW_MAX_ANGLE_RAD = 16 * Math.PI / 180
 
+// The cavity comes from the old open-mouth topology. Driving that topology at
+// the same gain as the rigid exterior jaw exposes too much of its lateral
+// teeth/cheek region and makes the mouth look wide and crooked. Keep the real
+// jaw rotation, but present the oral interior more conservatively and slightly
+// recessed behind the exact neutral lips.
+export const ORAL_CAVITY_MORPH_GAIN = 0.72
+export const ORAL_CAVITY_MORPH_MAX = 0.52
+export const ORAL_CAVITY_MIN_SCALE_X = 0.86
+export const ORAL_CAVITY_MAX_RECESS_Z = 0.024
+
 interface RegionalHybridState {
   headRoot: Object3D
   neutralMouthRoot: Object3D
@@ -23,6 +33,8 @@ interface RegionalHybridState {
   neutralBaseY: number
   neutralBaseZ: number
   neutralBaseRotationX: number
+  openBaseZ: number
+  openBaseScaleX: number
 }
 
 interface RendererPrototype {
@@ -38,11 +50,33 @@ const states = new WeakMap<StaticDragonRenderer, RegionalHybridState>()
 const patchMarker = Symbol.for('facecam.regionalHybridRuntime.v18')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value))
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const amount = clamp01((value - edge0) / Math.max(0.0001, edge1 - edge0))
+  return amount * amount * (3 - 2 * amount)
+}
+
+export function resolveOralCavityPresentation(
+  jawOpen: number,
+): { morphJaw: number; scaleX: number; recessZ: number } {
+  const jaw = clamp01(jawOpen)
+  const presentation = smoothstep(DUAL_TOPOLOGY_ENTER_JAW, 0.72, jaw)
+
+  return {
+    morphJaw: Math.min(ORAL_CAVITY_MORPH_MAX, jaw * ORAL_CAVITY_MORPH_GAIN),
+    scaleX: 1 - (1 - ORAL_CAVITY_MIN_SCALE_X) * presentation,
+    recessZ: ORAL_CAVITY_MAX_RECESS_Z * presentation,
+  }
+}
+
 export function resolveDualTopologyJaw(
   jawOpen: number,
   wasOpen: boolean,
 ): { openActive: boolean; morphJaw: number; jawAngleRad: number } {
-  const jaw = Math.min(1, Math.max(0, jawOpen))
+  const jaw = clamp01(jawOpen)
   let openActive = wasOpen
 
   if (!openActive && jaw >= DUAL_TOPOLOGY_ENTER_JAW) openActive = true
@@ -50,7 +84,7 @@ export function resolveDualTopologyJaw(
 
   return {
     openActive,
-    morphJaw: jaw,
+    morphJaw: resolveOralCavityPresentation(jaw).morphJaw,
     jawAngleRad: jaw * RIGID_JAW_MAX_ANGLE_RAD,
   }
 }
@@ -96,6 +130,8 @@ function installRegionalHybridRuntime(): void {
       neutralBaseY: neutralMouthRoot.position.y,
       neutralBaseZ: neutralMouthRoot.position.z,
       neutralBaseRotationX: neutralMouthRoot.rotation.x,
+      openBaseZ: openMouthRoot.position.z,
+      openBaseScaleX: openMouthRoot.scale.x,
     })
   }
 
@@ -109,6 +145,7 @@ function installRegionalHybridRuntime(): void {
     }
 
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
+    const cavity = resolveOralCavityPresentation(expression.jawOpen)
     state.openActive = resolved.openActive
 
     // Rotate the exact neutral lower jaw around the fixed hinge. Position is
@@ -118,15 +155,22 @@ function installRegionalHybridRuntime(): void {
     state.neutralMouthRoot.position.y = state.neutralBaseY + pivotOffset.y
     state.neutralMouthRoot.position.z = state.neutralBaseZ + pivotOffset.z
 
+    // Keep the authored cavity visually inside the exact neutral lip line.
+    // Narrowing only the cavity (never the exterior jaw) hides the lateral
+    // open-topology teeth that produced the wide/crooked mouth in live video.
+    state.openMouthRoot.scale.x = state.openBaseScaleX * cavity.scaleX
+    state.openMouthRoot.position.z = state.openBaseZ - cavity.recessZ
+
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = true
     state.openMouthRoot.visible = resolved.openActive
 
-    // Only the cavity owns jawOpen morphs in v18. The exterior neutral jaw is
-    // moved rigidly above, so the renderer cannot stretch the hocico again.
+    // Only the cavity owns jawOpen morphs in v18. Its morph is deliberately
+    // lower-gain than the rigid jaw rotation so the tongue/teeth stay natural
+    // while the exact exterior jaw still follows the user's opening.
     originalApplyExpression.call(this, {
       ...expression,
-      jawOpen: resolved.morphJaw,
+      jawOpen: cavity.morphJaw,
     })
   }
 }
