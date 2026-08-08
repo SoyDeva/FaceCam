@@ -27,7 +27,7 @@ const OPEN_RATIO = 0.80
 const LIVE_JAW_MAX = 0.68
 const LIVE_BLINK_CLOSE_ALPHA = 0.82
 const LIVE_BLINK_OPEN_ALPHA = 0.46
-const LIVE_JAW_OPEN_ALPHA = 0.58
+const LIVE_JAW_OPEN_ALPHA = 0.68
 const LIVE_JAW_CLOSE_ALPHA = 0.72
 
 const eyes: Record<EyeSide, EyeAutoState> = {
@@ -250,13 +250,13 @@ function harmonizedBlinkTargets(
 }
 
 function stableJawTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.16) return 0
+  if (previous < 0.035 && candidate <= 0.16) return 0
   if (previous >= 0.035 && candidate < 0.10) return 0
   return clamp(candidate, 0, LIVE_JAW_MAX)
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.025 && candidate < 0.08) return 0
+  if (previous < 0.025 && candidate <= 0.08) return 0
   if (previous >= 0.025 && candidate < 0.02) return 0
   return clamp(candidate)
 }
