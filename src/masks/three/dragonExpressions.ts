@@ -35,6 +35,7 @@ type RuntimeEyeSide = 'left' | 'right'
 
 const RUNTIME_EYE_RESET_MS = 1_500
 const RUNTIME_BLINK_MOUTH_INTERLOCK_THRESHOLD = 0.1
+const SMOOTH_BILATERAL_BLINK_INTERLOCK = 0.12
 const STRONGLY_OPEN_EYE = 0.2
 const OPEN_RATIO_VETO = 0.78
 
@@ -165,9 +166,6 @@ function runtimeEyeBlinkEvidence(
   state.lastOpening = opening
   state.lastSeenAt = now
 
-  // A real open eye stays geometrically stable for consecutive frames. This
-  // lets us learn neutral even when MediaPipe persistently reports eyeBlink
-  // around 0.30 on naturally narrow-looking eyes.
   if (opening > 0.06 && stableDelta <= 0.08 && rawBlink < 0.68) {
     state.stableOpenFrames += 1
   } else {
@@ -194,9 +192,6 @@ function runtimeEyeBlinkEvidence(
   const baselineBeforeUpdate = Math.max(0.0001, state.openBaseline)
   const openingRatio = opening / baselineBeforeUpdate
 
-  // Near the learned open geometry, the eyelids are visibly open. This is a
-  // hard veto over noisy/stale blendshape scores. A blink must first produce
-  // an actual geometric drop before it is allowed to close the dragon eye.
   if (openingRatio >= OPEN_RATIO_VETO) {
     const adaptation = opening > state.openBaseline ? 0.015 : 0.16
     state.openBaseline = lerp(state.openBaseline, opening, adaptation)
@@ -236,10 +231,17 @@ function resolveEyeBlink(
   const runtime = runtimeBlink ?? 0
   const calibrated = calibratedBlink === null ? 0 : clamp(calibratedBlink)
 
-  // A zero runtime value means current eyelid geometry positively supports an
-  // open eye. It therefore overrides both noisy MediaPipe blink scores and a
-  // stale stored calibration.
-  if (runtimeBlink !== null && runtime <= 0.001) return 0
+  // Stable/open live geometry vetoes ordinary MediaPipe noise, but an almost
+  // certain direct blink is still allowed through so a real closure can never
+  // be hidden by a learned neutral baseline.
+  if (
+    runtimeBlink !== null
+    && runtime <= 0.001
+    && directBlink < 0.9
+    && calibrated < 0.92
+  ) {
+    return 0
+  }
 
   return Math.max(directBlink, runtime, calibrated)
 }
@@ -249,9 +251,6 @@ function uncalibratedJawOpen(
   mouthHeight: number,
   mouthClose: number,
 ): number {
-  // MediaPipe jawOpen is the primary articulation signal. The inner-lip gap
-  // confirms it but cannot open the jaw by itself; this prevents lip thickness
-  // or landmark drift from animating a closed mouth.
   const jawEvidence = smoothstep(0.025, 0.3, jawOpen)
   const lipEvidence = smoothstep(0.006, 0.045, mouthHeight)
   const supportedLip = Math.min(lipEvidence, jawEvidence * 1.8 + 0.12)
@@ -260,7 +259,7 @@ function uncalibratedJawOpen(
   if (mouthClose >= 0.62) return 0
   if (jawOpen <= 0.015 && mouthHeight <= 0.012) return 0
   if (combined < 0.08) return 0
-  return clamp(Math.pow(combined, 0.88) * 0.88)
+  return clamp(Math.pow(combined, 0.88) * 0.82, 0, 0.82)
 }
 
 export function estimateDragonExpression(
@@ -366,14 +365,11 @@ export function estimateDragonExpression(
     calibration.mouthHeightNeutral + Math.max(0.0018, heightRange * 0.1),
   )
   const blinkMouthLock = runtimeBilateralBlink >= RUNTIME_BLINK_MOUTH_INTERLOCK_THRESHOLD
-  const neutralLock = (
-    metrics.mouthHeight <= closedLipLimit
-    && metrics.jawOpen <= calibration.jawNeutral + 0.018
-  ) || mouthClose >= 0.62
-  const articulatedJaw = Math.pow(rawJaw, 0.88) * 0.88
+  const neutralLock = metrics.mouthHeight <= closedLipLimit || mouthClose >= 0.62
+  const articulatedJaw = Math.pow(rawJaw, 0.88) * 0.82
   const jawOpen = neutralLock || blinkMouthLock || rawJaw < 0.08
     ? 0
-    : clamp(articulatedJaw)
+    : clamp(articulatedJaw, 0, 0.82)
 
   const lookOutLeft = score(scores, 'eyeLookOutLeft')
   const lookInLeft = score(scores, 'eyeLookInLeft')
@@ -410,8 +406,8 @@ export function estimateDragonExpression(
 }
 
 function stableJawTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate < 0.14) return 0
-  if (previous >= 0.035 && candidate < 0.09) return 0
+  if (previous < 0.035 && candidate < 0.18) return 0
+  if (previous >= 0.035 && candidate < 0.13) return 0
   return candidate
 }
 
@@ -427,12 +423,20 @@ export function smoothDragonExpression(
   alpha = 0.38,
 ): DragonExpressionState {
   const amount = clamp(alpha)
-  const jawTarget = stableJawTarget(previous.jawOpen, next.jawOpen)
+  const bilateralBlinkInterlock = Math.max(
+    Math.min(previous.blinkLeft, previous.blinkRight),
+    Math.min(next.blinkLeft, next.blinkRight),
+  ) >= SMOOTH_BILATERAL_BLINK_INTERLOCK
+  const jawTarget = bilateralBlinkInterlock
+    ? 0
+    : stableJawTarget(previous.jawOpen, next.jawOpen)
   const leftBlinkTarget = stableBlinkTarget(previous.blinkLeft, next.blinkLeft)
   const rightBlinkTarget = stableBlinkTarget(previous.blinkRight, next.blinkRight)
 
   return {
-    jawOpen: lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.76 : 0.82),
+    jawOpen: bilateralBlinkInterlock
+      ? 0
+      : lerp(previous.jawOpen, jawTarget, jawTarget > previous.jawOpen ? 0.72 : 0.78),
     blinkLeft: lerp(previous.blinkLeft, leftBlinkTarget, leftBlinkTarget > previous.blinkLeft ? 0.99 : 0.9),
     blinkRight: lerp(previous.blinkRight, rightBlinkTarget, rightBlinkTarget > previous.blinkRight ? 0.99 : 0.9),
     gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
