@@ -6,12 +6,11 @@ const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
 
-// v19 stops cutting or rotating a synthetic lower-jaw partition. The exact
-// closed source remains authoritative at rest and the authored oral region from
-// Abierto_Dragon.glb becomes authoritative once a genuine opening is underway.
-// The open source already contains its own jawOpen trajectory and complete oral
-// exterior/interior, so no runtime scaling, recess, clipping or rigid transform
-// is applied to it.
+// v20 keeps the authored v19 source-mouth behavior, but the GLB now places a
+// four-ring neutral seam collar permanently in the static head. That collar
+// backs the lateral cheek/comissure attachment while the original open-mouth
+// topology is visible, so profile views do not expose black holes. Runtime must
+// not transform either source mesh: all seam work is authored into the GLB.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
@@ -33,7 +32,7 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v19')
+const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v20')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -88,9 +87,6 @@ function installSourceMouthRuntime(): void {
       return
     }
 
-    // Remove every runtime transform left by the rigid-jaw experiments. v19
-    // renders both source meshes in the exact aligned coordinate system stored
-    // in the GLB.
     neutralMouthRoot.position.set(0, 0, 0)
     neutralMouthRoot.rotation.set(0, 0, 0)
     neutralMouthRoot.scale.set(1, 1, 1)
@@ -121,6 +117,8 @@ function installSourceMouthRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
+    // HeadRoot already contains the permanent neutral seam collar in v20.
+    // Only the central neutral mouth swaps with the authored open source.
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = !resolved.openActive
     state.openMouthRoot.visible = resolved.openActive
