@@ -8,7 +8,7 @@ import {
 } from './localAssetStore'
 
 const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v23.glb'
-const OFFICIAL_MODEL_SHA256 = 'e450a66fbe6a7e97c79503b8ff225aa0139aa7ae97665ed42126844ce159505f'
+const OFFICIAL_MODEL_SHA256 = 'bb09d2fcfb6a40fcd9cd894485eeac2633abb30268606d46550d65536be97234'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
