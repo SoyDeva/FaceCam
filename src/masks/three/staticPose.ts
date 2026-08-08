@@ -1,11 +1,13 @@
 import type { FaceLandmarkerResult } from '@mediapipe/tasks-vision'
 import {
   NEUTRAL_DRAGON_EXPRESSION,
-  smoothDragonExpression,
   type DragonExpressionState,
 } from './dragonExpressions'
 import type { DragonExpressionCalibration } from './expressionCalibration'
-import { estimateLiveAutoDragonExpression } from './liveAutoExpression'
+import {
+  estimateLiveAutoDragonExpression,
+  smoothLiveAutoDragonExpression,
+} from './liveAutoExpression'
 
 export interface StaticDragonPoseEstimate extends DragonExpressionState {
   visible: boolean
@@ -179,7 +181,7 @@ export function smoothStaticDragonPose(
 ): StaticDragonPoseEstimate {
   if (!next.visible || !previous?.visible) return next
   const amount = clamp(alpha, 0, 1)
-  const expression = smoothDragonExpression(previous, next, 0.36)
+  const expression = smoothLiveAutoDragonExpression(previous, next, 0.36)
 
   return {
     visible: true,

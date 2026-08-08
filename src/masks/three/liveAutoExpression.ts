@@ -24,6 +24,11 @@ interface MouthAutoState {
 const TRACKING_RESET_MS = 6_000
 const ABSOLUTELY_OPEN_EYE = 0.16
 const OPEN_RATIO = 0.80
+const LIVE_JAW_MAX = 0.68
+const LIVE_BLINK_CLOSE_ALPHA = 0.82
+const LIVE_BLINK_OPEN_ALPHA = 0.46
+const LIVE_JAW_OPEN_ALPHA = 0.68
+const LIVE_JAW_CLOSE_ALPHA = 0.72
 
 const eyes: Record<EyeSide, EyeAutoState> = {
   left: { openBaseline: 0, lastOpening: 0, lastSeenAt: 0, stableFrames: 0 },
@@ -219,7 +224,81 @@ function autoJawOpen(
   const combined = jawEvidence * 0.68 + supportedLip * 0.32
 
   if (combined < 0.075) return 0
-  return clamp(Math.pow(combined, 0.84) * 0.82, 0, 0.82)
+
+  // Conversation should live in the middle of the rigid-jaw travel instead of
+  // saturating it. The last part of the travel is reserved for a genuinely
+  // wide opening, which keeps teeth/tongue exposure and jaw rotation natural.
+  const conversational = Math.pow(combined, 1.28) * 0.60
+  const wideOpenReserve = smoothstep(0.88, 1, combined) * 0.08
+  return clamp(conversational + wideOpenReserve, 0, LIVE_JAW_MAX)
+}
+
+function harmonizedBlinkTargets(
+  left: number,
+  right: number,
+): { left: number; right: number } {
+  const bilateral = Math.min(left, right) >= 0.16
+  if (!bilateral) return { left, right }
+
+  const mean = (left + right) / 2
+  // During a real bilateral blink, reduce small detector asymmetries without
+  // destroying intentional one-eye winks.
+  return {
+    left: lerp(left, mean, 0.38),
+    right: lerp(right, mean, 0.38),
+  }
+}
+
+function stableJawTarget(previous: number, candidate: number): number {
+  if (previous < 0.035 && candidate <= 0.16) return 0
+  if (previous >= 0.035 && candidate < 0.10) return 0
+  return clamp(candidate, 0, LIVE_JAW_MAX)
+}
+
+function stableBlinkTarget(previous: number, candidate: number): number {
+  if (previous < 0.025 && candidate <= 0.08) return 0
+  if (previous >= 0.025 && candidate < 0.02) return 0
+  return clamp(candidate)
+}
+
+export function smoothLiveAutoDragonExpression(
+  previous: DragonExpressionState,
+  next: DragonExpressionState,
+  alpha = 0.36,
+): DragonExpressionState {
+  const amount = clamp(alpha)
+  const harmonized = harmonizedBlinkTargets(next.blinkLeft, next.blinkRight)
+  const leftTarget = stableBlinkTarget(previous.blinkLeft, harmonized.left)
+  const rightTarget = stableBlinkTarget(previous.blinkRight, harmonized.right)
+  const bilateralBlink = Math.max(
+    Math.min(previous.blinkLeft, previous.blinkRight),
+    Math.min(leftTarget, rightTarget),
+  ) >= 0.16
+  const jawTarget = bilateralBlink
+    ? 0
+    : stableJawTarget(previous.jawOpen, next.jawOpen)
+
+  const smoothBlink = (previousBlink: number, targetBlink: number) => lerp(
+    previousBlink,
+    targetBlink,
+    targetBlink > previousBlink ? LIVE_BLINK_CLOSE_ALPHA : LIVE_BLINK_OPEN_ALPHA,
+  )
+
+  return {
+    jawOpen: bilateralBlink
+      ? 0
+      : lerp(
+        previous.jawOpen,
+        jawTarget,
+        jawTarget > previous.jawOpen ? LIVE_JAW_OPEN_ALPHA : LIVE_JAW_CLOSE_ALPHA,
+      ),
+    blinkLeft: smoothBlink(previous.blinkLeft, leftTarget),
+    blinkRight: smoothBlink(previous.blinkRight, rightTarget),
+    gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
+    gazeY: lerp(previous.gazeY, next.gazeY, Math.min(amount, 0.22)),
+    smile: lerp(previous.smile, next.smile, Math.min(amount, 0.24)),
+    browRaise: lerp(previous.browRaise, next.browRaise, Math.min(amount, 0.24)),
+  }
 }
 
 export function estimateLiveAutoDragonExpression(
