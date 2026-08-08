@@ -50,40 +50,41 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v20 seam-collar source-mouth installer bundle
+      - name: Verify GLB v21 upper-source installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-HYBRID-v19.glb'
-          corrected='El modelo guardado no activó el rig de boca original con collar de unión del Dragón Blanco v20.'
-          model='FaceCam-Dragon-Blanco-HYBRID-v20.glb'
-          fingerprint='8d5514ad38c529b80f55960ac0730388b5d3799fbe391307a526782fb38b5899'
+          obsolete='FaceCam-Dragon-Blanco-HYBRID-v20.glb'
+          corrected='El modelo guardado no activó el hocico superior de fuente original del Dragón Blanco v21.'
+          model='FaceCam-Dragon-Blanco-HYBRID-v21.glb'
+          fingerprint='8e728e961024d54714341fea882d8ede1cce8c4fabaa984ff08ed928d142b147'
           head='FaceCamHeadStatic'
           neutralMouth='FaceCamNeutralMouth'
           openMouth='FaceCamOpenMouth'
+          upperMuzzle='FaceCamNeutralUpperMuzzle'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v19 sin collar de unión."
+            echo "::error::El paquete todavía solicita el GLB v20 con hocico superior neutral permanente."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación de unión corregida v20."
+            echo "::error::El paquete no contiene la validación del hocico superior original v21."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB híbrido v20 oficial."
+            echo "::error::El paquete no solicita el GLB híbrido v21 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v20."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v21."
             exit 1
           fi
 
-          for runtimeNode in "$head" "$neutralMouth" "$openMouth"; do
+          for runtimeNode in "$head" "$neutralMouth" "$openMouth" "$upperMuzzle"; do
             if ! grep -R -Fq "$runtimeNode" dist; then
-              echo "::error::El paquete no contiene el nodo runtime regional $runtimeNode."
+              echo "::error::El paquete no contiene el nodo runtime $runtimeNode."
               exit 1
             fi
           done
