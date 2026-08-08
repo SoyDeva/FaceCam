@@ -4,7 +4,7 @@ import {
   estimateDragonExpression,
   resetRuntimeDragonEyeTracking,
 } from './dragonExpressions'
-import type { DragonExpressionCalibration } from './expressionCalibration'
+import { extractDragonExpressionMetrics, type DragonExpressionCalibration } from './expressionCalibration'
 
 function landmark(x: number, y: number, z = 0): NormalizedLandmark {
   return { x, y, z, visibility: 1 }
@@ -16,6 +16,7 @@ function resultFor(
   eyeOpening: number,
   blinkLeft: number,
   blinkRight = blinkLeft,
+  outerLipGap = mouthGap,
 ): FaceLandmarkerResult {
   const landmarks = Array.from({ length: 478 }, () => landmark(0.5, 0.5))
   landmarks[10] = landmark(0.5, 0.2)
@@ -24,8 +25,8 @@ function resultFor(
   landmarks[291] = landmark(0.58, 0.56)
   landmarks[13] = landmark(0.5, 0.56 - mouthGap / 2)
   landmarks[14] = landmark(0.5, 0.56 + mouthGap / 2)
-  landmarks[0] = landmark(0.5, 0.56 - mouthGap / 2)
-  landmarks[17] = landmark(0.5, 0.56 + mouthGap / 2)
+  landmarks[0] = landmark(0.5, 0.56 - outerLipGap / 2)
+  landmarks[17] = landmark(0.5, 0.56 + outerLipGap / 2)
 
   const eyeGap = eyeOpening * 0.08
   landmarks[33] = landmark(0.35, 0.42)
@@ -104,6 +105,27 @@ describe('live expression regressions', () => {
 
     expect(expression.blinkLeft).toBe(0)
     expect(expression.blinkRight).toBe(0)
+  })
+
+  it('matches the captured live case: very open geometry beats blink noise around 0.30', () => {
+    const expression = estimateDragonExpression(
+      resultFor(0.002, 0.002, 0.387, 0.344, 0.3, 0.062),
+      staleEyeCalibration,
+    )
+
+    expect(expression.blinkLeft).toBe(0)
+    expect(expression.blinkRight).toBe(0)
+    expect(expression.jawOpen).toBe(0)
+  })
+
+  it('does not mistake thick outer lips for an open mouth', () => {
+    const result = resultFor(0.002, 0.002, 0.387, 0.03, 0.03, 0.062)
+    const metrics = extractDragonExpressionMetrics(result)
+
+    expect(metrics).not.toBeNull()
+    expect(metrics?.mouthHeight).toBeLessThan(0.01)
+    expect(metrics?.mouthWidth).toBeLessThan(0.02)
+    expect(estimateDragonExpression(result, null).jawOpen).toBe(0)
   })
 
   it('still blocks a false jaw spike during a real bilateral blink', () => {
