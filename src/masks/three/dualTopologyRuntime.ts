@@ -5,13 +5,13 @@ import { StaticDragonRenderer } from './StaticDragonRenderer'
 const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
-const UPPER_BRIDGE_NODE_NAME = 'FaceCamUpperMuzzleBridge'
+const UPPER_MUZZLE_NODE_NAME = 'FaceCamNeutralUpperMuzzle'
 
-// v23 abandons the v21/v22 cut-away strategy. The approved v20 head, eyes,
-// neutral mouth and authored Abierto_Dragon open mouth remain untouched. A
-// dedicated jawOpen-driven bridge is added only behind the upper source muzzle
-// so its attachment to the static head stays visually closed from front/profile
-// views without altering the approved lower mouth.
+// v24 stops splicing authored open upper skin into the neutral skull. The
+// approved neutral upper hocico stays visible and continuous at every jaw value.
+// Only the closed lower-mouth patch swaps with the authored Abierto_Dragon
+// lower/interior source. The GLB removes the 593-triangle open upper exterior
+// component that conflicted with the neutral hocico; eyes/tracking are unchanged.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
@@ -20,7 +20,7 @@ interface SourceMouthState {
   headRoot: Object3D
   neutralMouthRoot: Object3D
   openMouthRoot: Object3D
-  upperBridgeRoot: Object3D
+  upperMuzzleRoot: Object3D
   openActive: boolean
 }
 
@@ -34,7 +34,7 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v23')
+const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v24')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -79,32 +79,28 @@ function installSourceMouthRuntime(): void {
     const headRoot = root?.getObjectByName(HEAD_NODE_NAME) ?? null
     const neutralMouthRoot = root?.getObjectByName(NEUTRAL_MOUTH_NODE_NAME) ?? null
     const openMouthRoot = root?.getObjectByName(OPEN_MOUTH_NODE_NAME) ?? null
-    const upperBridgeRoot = root?.getObjectByName(UPPER_BRIDGE_NODE_NAME) ?? null
+    const upperMuzzleRoot = root?.getObjectByName(UPPER_MUZZLE_NODE_NAME) ?? null
 
-    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !upperBridgeRoot) {
+    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !upperMuzzleRoot) {
       states.delete(this)
       return
     }
 
-    neutralMouthRoot.position.set(0, 0, 0)
-    neutralMouthRoot.rotation.set(0, 0, 0)
-    neutralMouthRoot.scale.set(1, 1, 1)
-    openMouthRoot.position.set(0, 0, 0)
-    openMouthRoot.rotation.set(0, 0, 0)
-    openMouthRoot.scale.set(1, 1, 1)
-    upperBridgeRoot.position.set(0, 0, 0)
-    upperBridgeRoot.rotation.set(0, 0, 0)
-    upperBridgeRoot.scale.set(1, 1, 1)
+    for (const rootPart of [neutralMouthRoot, openMouthRoot, upperMuzzleRoot]) {
+      rootPart.position.set(0, 0, 0)
+      rootPart.rotation.set(0, 0, 0)
+      rootPart.scale.set(1, 1, 1)
+    }
 
     headRoot.visible = true
+    upperMuzzleRoot.visible = true
     neutralMouthRoot.visible = true
     openMouthRoot.visible = false
-    upperBridgeRoot.visible = false
     states.set(this, {
       headRoot,
       neutralMouthRoot,
       openMouthRoot,
-      upperBridgeRoot,
+      upperMuzzleRoot,
       openActive: false,
     })
   }
@@ -121,14 +117,12 @@ function installSourceMouthRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
+    // The upper skull/hocico never switches topology in v24.
     state.headRoot.visible = true
+    state.upperMuzzleRoot.visible = true
     state.neutralMouthRoot.visible = !resolved.openActive
     state.openMouthRoot.visible = resolved.openActive
-    state.upperBridgeRoot.visible = resolved.openActive
 
-    // The bridge carries its own `jawOpen` morph target, so the existing
-    // StaticDragonRenderer morph dispatcher drives it with the exact same
-    // value as the authored open-mouth source.
     originalApplyExpression.call(this, {
       ...expression,
       jawOpen: resolved.morphJaw,
