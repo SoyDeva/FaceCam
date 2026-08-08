@@ -50,39 +50,39 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v22 source-matched upper installer bundle
+      - name: Verify GLB v23 welded-upper-bridge installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-HYBRID-v21.glb'
-          corrected='El modelo guardado no activó el hocico superior alineado a la fuente original del Dragón Blanco v22.'
-          model='FaceCam-Dragon-Blanco-HYBRID-v22.glb'
-          fingerprint='87bb61ad7da393987e15dcff9f9f54c7c2c9d4d981d40a2ac1881e1138b74bd2'
+          obsolete='FaceCam-Dragon-Blanco-HYBRID-v22.glb'
+          corrected='El modelo guardado no activó la unión soldada del hocico superior del Dragón Blanco v23.'
+          model='FaceCam-Dragon-Blanco-HYBRID-v23.glb'
+          fingerprint='bb09d2fcfb6a40fcd9cd894485eeac2633abb30268606d46550d65536be97234'
           head='FaceCamHeadStatic'
           neutralMouth='FaceCamNeutralMouth'
           openMouth='FaceCamOpenMouth'
-          upperMuzzle='FaceCamNeutralUpperMuzzle'
+          upperBridge='FaceCamUpperMuzzleBridge'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v21 con corte superior horizontal."
+            echo "::error::El paquete todavía solicita el GLB v22 con recorte del hocico superior."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación del hocico superior alineado v22."
+            echo "::error::El paquete no contiene la validación de la unión soldada v23."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB híbrido v22 oficial."
+            echo "::error::El paquete no solicita el GLB híbrido v23 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v22."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v23."
             exit 1
           fi
 
-          for runtimeNode in "$head" "$neutralMouth" "$openMouth" "$upperMuzzle"; do
+          for runtimeNode in "$head" "$neutralMouth" "$openMouth" "$upperBridge"; do
             if ! grep -R -Fq "$runtimeNode" dist; then
               echo "::error::El paquete no contiene el nodo runtime $runtimeNode."
               exit 1
