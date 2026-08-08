@@ -6,8 +6,8 @@ import {
   resolveDualTopologyJaw,
 } from './dualTopologyRuntime'
 
-describe('resolveDualTopologyJaw v25 switchable-upper-seam contract', () => {
-  it('keeps the exact v20-derived closed geometry active at rest', () => {
+describe('resolveDualTopologyJaw v26 complete-source contract', () => {
+  it('keeps the complete approved v20 neutral visible at rest', () => {
     expect(resolveDualTopologyJaw(0, false)).toEqual({
       openActive: false,
       morphJaw: 0,
@@ -18,13 +18,13 @@ describe('resolveDualTopologyJaw v25 switchable-upper-seam contract', () => {
     })
   })
 
-  it('switches to the authored open source only after a real jaw opening', () => {
+  it('switches to the complete authored source only after a real opening', () => {
     const result = resolveDualTopologyJaw(DUAL_TOPOLOGY_ENTER_JAW, false)
     expect(result.openActive).toBe(true)
     expect(result.morphJaw).toBeCloseTo(DUAL_TOPOLOGY_OPEN_MORPH_START, 8)
   })
 
-  it('uses hysteresis so the upper seam cannot chatter on tracking noise', () => {
+  it('uses hysteresis so complete topologies cannot chatter on tracking noise', () => {
     const stillOpen = resolveDualTopologyJaw(DUAL_TOPOLOGY_EXIT_JAW + 0.01, true)
     expect(stillOpen.openActive).toBe(true)
     expect(stillOpen.morphJaw).toBeGreaterThanOrEqual(DUAL_TOPOLOGY_OPEN_MORPH_START)
@@ -33,9 +33,8 @@ describe('resolveDualTopologyJaw v25 switchable-upper-seam contract', () => {
     expect(closed).toEqual({ openActive: false, morphJaw: 0 })
   })
 
-  it('preserves the exact authored Abierto_Dragon full-open endpoint', () => {
-    const result = resolveDualTopologyJaw(1, true)
-    expect(result).toEqual({ openActive: true, morphJaw: 1 })
+  it('reaches the exact authored Abierto_Dragon endpoint at full opening', () => {
+    expect(resolveDualTopologyJaw(1, true)).toEqual({ openActive: true, morphJaw: 1 })
   })
 
   it('keeps conversational openings below the full-open endpoint', () => {
@@ -45,7 +44,7 @@ describe('resolveDualTopologyJaw v25 switchable-upper-seam contract', () => {
     expect(result.morphJaw).toBeLessThan(0.75)
   })
 
-  it('clamps malformed jaw values without changing the topology contract', () => {
+  it('clamps malformed jaw values without changing the full-source contract', () => {
     expect(resolveDualTopologyJaw(-1, false)).toEqual({ openActive: false, morphJaw: 0 })
     expect(resolveDualTopologyJaw(2, true)).toEqual({ openActive: true, morphJaw: 1 })
   })
