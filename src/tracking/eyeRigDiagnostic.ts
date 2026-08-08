@@ -28,8 +28,6 @@ const FACE = {
   mouthRight: 291,
   upperLipInner: 13,
   lowerLipInner: 14,
-  upperLipOuter: 0,
-  lowerLipOuter: 17,
 } as const
 
 function distance2d(a: NormalizedLandmark, b: NormalizedLandmark): number {
@@ -74,9 +72,7 @@ function mouthGeometry(
   const mouthRight = landmarks[FACE.mouthRight]
   const upperInner = landmarks[FACE.upperLipInner]
   const lowerInner = landmarks[FACE.lowerLipInner]
-  const upperOuter = landmarks[FACE.upperLipOuter]
-  const lowerOuter = landmarks[FACE.lowerLipOuter]
-  if (!forehead || !chin || !mouthLeft || !mouthRight || !upperInner || !lowerInner || !upperOuter || !lowerOuter) {
+  if (!forehead || !chin || !mouthLeft || !mouthRight || !upperInner || !lowerInner) {
     return { mouthHeight: null, mouthGapToSpan: null }
   }
 
@@ -86,13 +82,13 @@ function mouthGeometry(
     return { mouthHeight: null, mouthGapToSpan: null }
   }
 
+  // Only the inner-lip aperture is an actual mouth opening. Outer-lip
+  // thickness is intentionally excluded from diagnostics and runtime metrics.
   const innerGap = distance2d(upperInner, lowerInner)
-  const outerGap = distance2d(upperOuter, lowerOuter)
-  const mouthGap = Math.max(innerGap, outerGap * 0.74)
 
   return {
-    mouthHeight: mouthGap / faceHeight,
-    mouthGapToSpan: mouthGap / mouthSpan,
+    mouthHeight: innerGap / faceHeight,
+    mouthGapToSpan: innerGap / mouthSpan,
   }
 }
 
