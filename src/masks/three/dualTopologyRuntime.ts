@@ -2,26 +2,24 @@ import type { Object3D } from 'three'
 import type { DragonExpressionState } from './dragonExpressions'
 import { StaticDragonRenderer } from './StaticDragonRenderer'
 
-const HEAD_NODE_NAME = 'FaceCamHeadStatic'
+const NEUTRAL_HEAD_NODE_NAME = 'FaceCamNeutralHead'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
-const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
-const NEUTRAL_UPPER_SEAM_NODE_NAME = 'FaceCamNeutralUpperSeam'
+const OPEN_FULL_NODE_NAME = 'FaceCamOpenFullSource'
 
-// v25 returns to the approved v20 geometry and fixes the upper-mouth conflict
-// at its real source: 109 triangles that v20 had made permanently static are
-// now a closed-state seam node. At rest they restore v20 byte-for-byte. During
-// a genuine opening they hide so the untouched authored Abierto_Dragon upper
-// mouth can occupy that space. The v20 neutral mouth, open-mouth patch and eye
-// morph accessors remain unchanged.
+// v26 removes the regional mouth splice entirely. Closed state is the approved
+// v20 neutral head + neutral mouth. Once a real opening begins, both neutral
+// pieces hide and the complete authored Abierto_Dragon topology becomes the
+// only visible dragon. The open full-source mesh carries jawOpen plus transferred
+// eyeBlinkLeft/eyeBlinkRight morphs, so blinking remains native in both states
+// without ever overlapping two different upper muzzles.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
 
-interface SourceMouthState {
-  headRoot: Object3D
+interface DualSourceState {
+  neutralHeadRoot: Object3D
   neutralMouthRoot: Object3D
-  openMouthRoot: Object3D
-  neutralUpperSeamRoot: Object3D
+  openFullRoot: Object3D
   openActive: boolean
 }
 
@@ -34,8 +32,8 @@ interface RendererPrivateView {
   modelRoot: Object3D | null
 }
 
-const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v25')
+const states = new WeakMap<StaticDragonRenderer, DualSourceState>()
+const patchMarker = Symbol.for('facecam.fullSourceRuntime.v26')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -66,47 +64,44 @@ export function resolveDualTopologyJaw(
   return { openActive: true, morphJaw }
 }
 
-function installSourceMouthRuntime(): void {
+function installFullSourceRuntime(): void {
   if (prototype[patchMarker]) return
   prototype[patchMarker] = true
 
   const originalLoad = prototype.load
   const originalApplyExpression = prototype.applyExpression
 
-  prototype.load = async function loadWithSourceMouth(file: Blob): Promise<void> {
+  prototype.load = async function loadWithFullSource(file: Blob): Promise<void> {
     await originalLoad.call(this, file)
 
     const root = (this as unknown as RendererPrivateView).modelRoot
-    const headRoot = root?.getObjectByName(HEAD_NODE_NAME) ?? null
+    const neutralHeadRoot = root?.getObjectByName(NEUTRAL_HEAD_NODE_NAME) ?? null
     const neutralMouthRoot = root?.getObjectByName(NEUTRAL_MOUTH_NODE_NAME) ?? null
-    const openMouthRoot = root?.getObjectByName(OPEN_MOUTH_NODE_NAME) ?? null
-    const neutralUpperSeamRoot = root?.getObjectByName(NEUTRAL_UPPER_SEAM_NODE_NAME) ?? null
+    const openFullRoot = root?.getObjectByName(OPEN_FULL_NODE_NAME) ?? null
 
-    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !neutralUpperSeamRoot) {
+    if (!neutralHeadRoot || !neutralMouthRoot || !openFullRoot) {
       states.delete(this)
       return
     }
 
-    for (const rootPart of [neutralMouthRoot, openMouthRoot, neutralUpperSeamRoot]) {
+    for (const rootPart of [neutralHeadRoot, neutralMouthRoot, openFullRoot]) {
       rootPart.position.set(0, 0, 0)
       rootPart.rotation.set(0, 0, 0)
       rootPart.scale.set(1, 1, 1)
     }
 
-    headRoot.visible = true
-    neutralUpperSeamRoot.visible = true
+    neutralHeadRoot.visible = true
     neutralMouthRoot.visible = true
-    openMouthRoot.visible = false
+    openFullRoot.visible = false
     states.set(this, {
-      headRoot,
+      neutralHeadRoot,
       neutralMouthRoot,
-      openMouthRoot,
-      neutralUpperSeamRoot,
+      openFullRoot,
       openActive: false,
     })
   }
 
-  prototype.applyExpression = function applyExpressionWithSourceMouth(
+  prototype.applyExpression = function applyExpressionWithFullSource(
     expression: DragonExpressionState,
   ): void {
     const state = states.get(this)
@@ -118,14 +113,15 @@ function installSourceMouthRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
-    // The eye-bearing head never changes. Only the closed upper seam and the
-    // neutral mouth switch off while the untouched v20 open-source patch takes
-    // over. This keeps the approved lower mouth and eyelid morphs isolated.
-    state.headRoot.visible = true
-    state.neutralUpperSeamRoot.visible = !resolved.openActive
+    // Never render neutral and open upper skulls together. This is the central
+    // v26 invariant that removes every mouth seam/shelf from v21-v25.
+    state.neutralHeadRoot.visible = !resolved.openActive
     state.neutralMouthRoot.visible = !resolved.openActive
-    state.openMouthRoot.visible = resolved.openActive
+    state.openFullRoot.visible = resolved.openActive
 
+    // The open full-source mesh has jawOpen + both blink morphs. The existing
+    // renderer therefore drives the same expression state on whichever complete
+    // topology is currently visible.
     originalApplyExpression.call(this, {
       ...expression,
       jawOpen: resolved.morphJaw,
@@ -133,4 +129,4 @@ function installSourceMouthRuntime(): void {
   }
 }
 
-installSourceMouthRuntime()
+installFullSourceRuntime()

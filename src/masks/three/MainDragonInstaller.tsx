@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v25.glb'
-const OFFICIAL_MODEL_SHA256 = '6559a0025c579dda2894f5771db6c34911f8ced8f238dc0074405dce8cf4c725'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v26.glb'
+const OFFICIAL_MODEL_SHA256 = '1f2398dfdbc2ca8db0afeee1cdabe48812594bb0bfc18b15e16fb4240e1d7583'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,13 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v25 is rebuilt from the approved v20 geometry. The lower neutral/open
-    // mouth and the eye morph buffers are preserved byte-for-byte; only 109
-    // upper static seam triangles become a closed-state node so the authentic
-    // Abierto_Dragon upper mouth can appear without the v24 shelf.
+    // v26 never splices upper-mouth geometry. Closed state uses the complete
+    // approved v20 neutral; open state uses the complete authored Abierto_Dragon
+    // source with jawOpen plus transferred v20 blink morphs.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó la costura superior conmutable del Dragón Blanco v25.',
+        'El modelo guardado no activó la arquitectura de fuentes completas del Dragón Blanco v26.',
       )
     }
   } finally {
@@ -51,7 +50,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco híbrido v25 con boca inferior v20 congelada y costura superior conmutable.',
+      'El archivo no corresponde al Dragón Blanco v26 con neutral v20 completo y Abierto_Dragon completo.',
     )
   }
 
@@ -73,11 +72,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v25: conserva ojos y boca inferior de v20 y corrige únicamente la unión superior con la fuente abierta original.')
+          setMessage('Instala el dragón v26: neutral v20 completo y fuente Abierto_Dragon completa, sin costuras de hocico.')
           return
         }
 
-        setMessage('Verificando el GLB v25, los ojos congelados, la boca inferior v20 y la costura superior conmutable…')
+        setMessage('Verificando el GLB v26, las fuentes completas y los párpados en ambos estados…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -87,7 +86,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v25.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v26.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -99,7 +98,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v25 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco v26 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -127,11 +126,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v25 sin modificar tu calibración ni la lógica de ojos…')
+    setMessage('Verificando el GLB v26 sin modificar tu calibración ni la lógica de tracking…')
 
     try {
       await install(file)
-      setMessage('Dragón v25 instalado. Reiniciando FaceCam con la boca inferior aprobada y la unión superior corregida…')
+      setMessage('Dragón v26 instalado. Reiniciando FaceCam con fuentes completas y sin empalmes de hocico…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -166,7 +165,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco híbrido v25 · ojos y boca inferior v20 congelados
+        Dragón Blanco v26 · neutral completo ↔ abierto completo
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -188,7 +187,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v25'}
+            : 'Seleccionar dragón v26'}
       </button>
     </aside>
   )
