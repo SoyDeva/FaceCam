@@ -5,13 +5,14 @@ import { StaticDragonRenderer } from './StaticDragonRenderer'
 const HEAD_NODE_NAME = 'FaceCamHeadStatic'
 const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
-const UPPER_MUZZLE_NODE_NAME = 'FaceCamNeutralUpperMuzzle'
+const NEUTRAL_UPPER_SEAM_NODE_NAME = 'FaceCamNeutralUpperSeam'
 
-// v24 stops splicing authored open upper skin into the neutral skull. The
-// approved neutral upper hocico stays visible and continuous at every jaw value.
-// Only the closed lower-mouth patch swaps with the authored Abierto_Dragon
-// lower/interior source. The GLB removes the 593-triangle open upper exterior
-// component that conflicted with the neutral hocico; eyes/tracking are unchanged.
+// v25 returns to the approved v20 geometry and fixes the upper-mouth conflict
+// at its real source: 109 triangles that v20 had made permanently static are
+// now a closed-state seam node. At rest they restore v20 byte-for-byte. During
+// a genuine opening they hide so the untouched authored Abierto_Dragon upper
+// mouth can occupy that space. The v20 neutral mouth, open-mouth patch and eye
+// morph accessors remain unchanged.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
@@ -20,7 +21,7 @@ interface SourceMouthState {
   headRoot: Object3D
   neutralMouthRoot: Object3D
   openMouthRoot: Object3D
-  upperMuzzleRoot: Object3D
+  neutralUpperSeamRoot: Object3D
   openActive: boolean
 }
 
@@ -34,7 +35,7 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v24')
+const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v25')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -79,28 +80,28 @@ function installSourceMouthRuntime(): void {
     const headRoot = root?.getObjectByName(HEAD_NODE_NAME) ?? null
     const neutralMouthRoot = root?.getObjectByName(NEUTRAL_MOUTH_NODE_NAME) ?? null
     const openMouthRoot = root?.getObjectByName(OPEN_MOUTH_NODE_NAME) ?? null
-    const upperMuzzleRoot = root?.getObjectByName(UPPER_MUZZLE_NODE_NAME) ?? null
+    const neutralUpperSeamRoot = root?.getObjectByName(NEUTRAL_UPPER_SEAM_NODE_NAME) ?? null
 
-    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !upperMuzzleRoot) {
+    if (!headRoot || !neutralMouthRoot || !openMouthRoot || !neutralUpperSeamRoot) {
       states.delete(this)
       return
     }
 
-    for (const rootPart of [neutralMouthRoot, openMouthRoot, upperMuzzleRoot]) {
+    for (const rootPart of [neutralMouthRoot, openMouthRoot, neutralUpperSeamRoot]) {
       rootPart.position.set(0, 0, 0)
       rootPart.rotation.set(0, 0, 0)
       rootPart.scale.set(1, 1, 1)
     }
 
     headRoot.visible = true
-    upperMuzzleRoot.visible = true
+    neutralUpperSeamRoot.visible = true
     neutralMouthRoot.visible = true
     openMouthRoot.visible = false
     states.set(this, {
       headRoot,
       neutralMouthRoot,
       openMouthRoot,
-      upperMuzzleRoot,
+      neutralUpperSeamRoot,
       openActive: false,
     })
   }
@@ -117,9 +118,11 @@ function installSourceMouthRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
-    // The upper skull/hocico never switches topology in v24.
+    // The eye-bearing head never changes. Only the closed upper seam and the
+    // neutral mouth switch off while the untouched v20 open-source patch takes
+    // over. This keeps the approved lower mouth and eyelid morphs isolated.
     state.headRoot.visible = true
-    state.upperMuzzleRoot.visible = true
+    state.neutralUpperSeamRoot.visible = !resolved.openActive
     state.neutralMouthRoot.visible = !resolved.openActive
     state.openMouthRoot.visible = resolved.openActive
 
