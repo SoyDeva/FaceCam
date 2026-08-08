@@ -231,9 +231,6 @@ function resolveEyeBlink(
   const runtime = runtimeBlink ?? 0
   const calibrated = calibratedBlink === null ? 0 : clamp(calibratedBlink)
 
-  // Stable/open live geometry vetoes ordinary MediaPipe noise, but an almost
-  // certain direct blink is still allowed through so a real closure can never
-  // be hidden by a learned neutral baseline.
   if (
     runtimeBlink !== null
     && runtime <= 0.001
@@ -361,7 +358,7 @@ export function estimateDragonExpression(
     calibration.mouthHeightSpeech - calibration.mouthHeightNeutral,
   )
   const closedLipLimit = Math.max(
-    0.008,
+    0.026,
     calibration.mouthHeightNeutral + Math.max(0.0018, heightRange * 0.1),
   )
   const blinkMouthLock = runtimeBilateralBlink >= RUNTIME_BLINK_MOUTH_INTERLOCK_THRESHOLD
