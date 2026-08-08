@@ -46,8 +46,6 @@ const LANDMARK = {
   mouthRight: 291,
   upperLipInner: 13,
   lowerLipInner: 14,
-  upperLipOuter: 0,
-  lowerLipOuter: 17,
   leftEyeOuter: 33,
   leftEyeInner: 133,
   leftEyeUpperA: 159,
@@ -138,9 +136,7 @@ export function extractDragonExpressionMetrics(
   const mouthRight = landmarks[LANDMARK.mouthRight]
   const upperInner = landmarks[LANDMARK.upperLipInner]
   const lowerInner = landmarks[LANDMARK.lowerLipInner]
-  const upperOuter = landmarks[LANDMARK.upperLipOuter]
-  const lowerOuter = landmarks[LANDMARK.lowerLipOuter]
-  if (!forehead || !chin || !mouthLeft || !mouthRight || !upperInner || !lowerInner || !upperOuter || !lowerOuter) {
+  if (!forehead || !chin || !mouthLeft || !mouthRight || !upperInner || !lowerInner) {
     return null
   }
 
@@ -173,14 +169,15 @@ export function extractDragonExpressionMetrics(
   if (leftEyeOpening === null || rightEyeOpening === null) return null
 
   const scores = scoreMap(result)
+  // Landmarks 13/14 represent the actual inner lip aperture. The previous
+  // outer-lip fallback measured lip thickness as if it were an open mouth,
+  // which produced large false openings with closed lips on some faces.
   const innerGap = distance2d(upperInner, lowerInner)
-  const outerGap = distance2d(upperOuter, lowerOuter)
-  const mouthGap = Math.max(innerGap, outerGap * 0.74)
 
   return {
     jawOpen: scores.get('jawOpen') ?? 0,
-    mouthHeight: mouthGap / faceHeight,
-    mouthWidth: mouthGap / mouthSpan,
+    mouthHeight: innerGap / faceHeight,
+    mouthWidth: innerGap / mouthSpan,
     leftEyeOpening,
     rightEyeOpening,
     leftBlink: scores.get('eyeBlinkLeft') ?? 0,
@@ -218,9 +215,6 @@ function hasRealBilateralClosure(
   const leftBlendshape = blendshapeClosure(metrics.leftBlink, neutral.leftBlink)
   const rightBlendshape = blendshapeClosure(metrics.rightBlink, neutral.rightBlink)
 
-  // Both eyes must provide their own geometric evidence. The blendshape helps
-  // with brief natural blinks, but cannot turn a wink or eyebrow motion into a
-  // bilateral closure.
   const leftClosed = leftGeometry >= 0.34
     || (leftGeometry >= 0.2 && leftBlendshape >= 0.42)
   const rightClosed = rightGeometry >= 0.34
