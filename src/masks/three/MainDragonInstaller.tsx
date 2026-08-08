@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v23.glb'
-const OFFICIAL_MODEL_SHA256 = 'bb09d2fcfb6a40fcd9cd894485eeac2633abb30268606d46550d65536be97234'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v24.glb'
+const OFFICIAL_MODEL_SHA256 = 'c668363ebb23a15341a102eb33b190b2e52c398e019fdd81a14fc8240cba86bc'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,11 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v23 preserves all v20 geometry and adds only a jawOpen-driven upper
-    // bridge that closes the source-muzzle attachment without touching the
-    // approved lower mouth.
+    // v24 keeps the neutral upper skull/hocico continuous and switches only
+    // the lower/interior mouth to the authored Abierto_Dragon source.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó la unión soldada del hocico superior del Dragón Blanco v23.',
+        'El modelo guardado no activó el hocico superior continuo del Dragón Blanco v24.',
       )
     }
   } finally {
@@ -50,7 +49,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco híbrido v23 con la boca v20 intacta y la unión superior soldada.',
+      'El archivo no corresponde al Dragón Blanco híbrido v24 con hocico superior neutral continuo y boca inferior original.',
     )
   }
 
@@ -72,11 +71,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v23: boca v20 intacta y unión soldada del hocico superior original.')
+          setMessage('Instala el dragón v24: hocico superior neutral continuo y boca inferior tomada de la fuente abierta original.')
           return
         }
 
-        setMessage('Verificando el GLB v23, la boca v20 congelada y la unión superior soldada…')
+        setMessage('Verificando el GLB v24, el hocico superior continuo y la boca inferior original…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -86,7 +85,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v23.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v24.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -98,7 +97,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v23 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v24 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -126,11 +125,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v23 sin modificar tu calibración…')
+    setMessage('Verificando el GLB v24 sin modificar tu calibración…')
 
     try {
       await install(file)
-      setMessage('Dragón v23 instalado. Reiniciando FaceCam con la unión superior soldada…')
+      setMessage('Dragón v24 instalado. Reiniciando FaceCam con el hocico superior continuo…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -165,7 +164,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco híbrido v23 · boca v20 intacta + unión superior soldada
+        Dragón Blanco híbrido v24 · hocico superior continuo + inferior original
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -187,7 +186,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v23'}
+            : 'Seleccionar dragón v24'}
       </button>
     </aside>
   )
