@@ -7,12 +7,11 @@ const NEUTRAL_MOUTH_NODE_NAME = 'FaceCamNeutralMouth'
 const OPEN_MOUTH_NODE_NAME = 'FaceCamOpenMouth'
 const NEUTRAL_UPPER_MUZZLE_NODE_NAME = 'FaceCamNeutralUpperMuzzle'
 
-// v21 freezes the approved v20 lower mouth completely. The only new behavior
-// is an upper-hocico source switch: 321 neutral collar triangles are separated
-// into their own closed-only node. When the mouth opens that node disappears,
-// allowing the authored Abierto_Dragon upper lip/hocico to become visible.
-// Lower mouth geometry, the permanent lateral seam collar, tracking and eye
-// behavior are unchanged from v20.
+// v22 keeps the approved v20 lower mouth byte-for-byte and replaces only the
+// upper muzzle region that genuinely matches the authored Abierto_Dragon upper
+// source surface. Unlike v21, the switch no longer follows a horizontal Y cut:
+// the GLB retains a broad neutral overlap band around the source-matched patch,
+// preventing the saw-tooth seam seen under the hocico while open.
 export const DUAL_TOPOLOGY_ENTER_JAW = 0.14
 export const DUAL_TOPOLOGY_EXIT_JAW = 0.055
 export const DUAL_TOPOLOGY_OPEN_MORPH_START = 0.32
@@ -35,7 +34,7 @@ interface RendererPrivateView {
 }
 
 const states = new WeakMap<StaticDragonRenderer, SourceMouthState>()
-const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v21')
+const patchMarker = Symbol.for('facecam.sourceMouthRuntime.v22')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -122,9 +121,6 @@ function installSourceMouthRuntime(): void {
     const resolved = resolveDualTopologyJaw(expression.jawOpen, state.openActive)
     state.openActive = resolved.openActive
 
-    // v21 contract: the v20 lower/lateral construction is untouched. Only the
-    // central upper neutral muzzle swaps out when the original open source is
-    // active. At rest all neutral pieces are visible, reproducing v20 exactly.
     state.headRoot.visible = true
     state.neutralMouthRoot.visible = !resolved.openActive
     state.neutralUpperMuzzleRoot.visible = !resolved.openActive
