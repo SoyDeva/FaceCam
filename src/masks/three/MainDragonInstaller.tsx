@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v18.glb'
-const OFFICIAL_MODEL_SHA256 = '90ee293f8cbe4acaed94d08b7127eaafe512eabec3ce96ec8bc85fd5bc681e15'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v19.glb'
+const OFFICIAL_MODEL_SHA256 = 'f4772068c942fb43e72e7e018f9b2b6d1b5a2aeb3f8c19a74181b79cbc63d75b'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,11 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v18 freezes the approved eye rig and keeps the neutral upper face exact.
-    // The lower jaw is a rigid neutral mesh rotated by runtime; the open-source
-    // topology exists only as cavity material behind the opening.
+    // v19 restores the two authoritative source topologies: exact original
+    // neutral at rest and the authored Abierto_Dragon oral region while open.
     if (renderer.facialRigMode === 'static-model') {
       throw new Error(
-        'El modelo guardado no activó el rig rígido de mandíbula del Dragón Blanco v18.',
+        'El modelo guardado no activó el rig de boca original del Dragón Blanco v19.',
       )
     }
   } finally {
@@ -50,7 +49,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco híbrido v18 de mandíbula rígida.',
+      'El archivo no corresponde al Dragón Blanco híbrido v19 con boca original.',
     )
   }
 
@@ -72,11 +71,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v18: ojos aprobados intactos y mandíbula inferior rígida.')
+          setMessage('Instala el dragón v19: neutral original, boca abierta original y ojos aprobados intactos.')
           return
         }
 
-        setMessage('Verificando el GLB v18, los ojos congelados y la mandíbula rígida…')
+        setMessage('Verificando el GLB v19 y las topologías originales de boca…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -86,7 +85,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v18.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo híbrido v19.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -98,7 +97,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v18 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco híbrido v19 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -126,11 +125,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v18 sin modificar tu calibración…')
+    setMessage('Verificando el GLB v19 sin modificar tu calibración…')
 
     try {
       await install(file)
-      setMessage('Dragón v18 instalado. Reiniciando FaceCam para validar la mandíbula rígida…')
+      setMessage('Dragón v19 instalado. Reiniciando FaceCam con la boca original…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -165,7 +164,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco híbrido v18 · mandíbula rígida
+        Dragón Blanco híbrido v19 · boca original
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -187,7 +186,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v18'}
+            : 'Seleccionar dragón v19'}
       </button>
     </aside>
   )
