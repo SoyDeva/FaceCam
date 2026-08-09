@@ -6,8 +6,8 @@ import {
   resolveSingleSourceJaw,
 } from './dualTopologyRuntime'
 
-describe('resolveSingleSourceJaw v27 one-topology contract', () => {
-  it('holds the neutral-close morph fully at rest', () => {
+describe('resolveSingleSourceJaw v28 corrected-neutral contract', () => {
+  it('holds the corrected neutral-close morph fully at rest', () => {
     const result = resolveSingleSourceJaw(0)
     expect(result.openAmount).toBe(0)
     expect(result.closeWeight).toBe(1)
