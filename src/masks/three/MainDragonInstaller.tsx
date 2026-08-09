@@ -7,8 +7,8 @@ import {
   saveLocalDragonModel,
 } from './localAssetStore'
 
-const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v28.glb'
-const OFFICIAL_MODEL_SHA256 = '8a5bf57dec3b17f0ae664ed7c37ae399c008820a72643efc6a5d03b655563692'
+const OFFICIAL_MODEL_NAME = 'FaceCam-Dragon-Blanco-HYBRID-v29.glb'
+const OFFICIAL_MODEL_SHA256 = 'b8c41ebca7c30703458e588ca73996cabc558615ef8ed6cb2b0ea288deaabd4f'
 const MAX_GLB_SIZE = 15 * 1024 * 1024
 
 type InstallerState = 'checking' | 'needed' | 'installing' | 'error' | 'hidden'
@@ -33,12 +33,12 @@ async function validateCorrectedRig(blob: Blob): Promise<void> {
   try {
     await renderer.load(blob)
 
-    // v28 keeps one complete Abierto_Dragon topology. Only its neutral-close
-    // target was cleaned up: the lower central seal is restored and oral
-    // internals are tucked behind the closed lips. Both eyelid morphs remain native.
+    // v29 keeps one complete Abierto_Dragon topology. The neutral-close target
+    // is rebuilt as a smooth spatial oral deformation referenced against the
+    // original neutral shape, while both native eyelid morphs remain untouched.
     if (renderer.facialRigMode !== 'native') {
       throw new Error(
-        'El modelo guardado no activó la malla única v28 con sello neutro corregido y ambos párpados.',
+        'El modelo guardado no activó la malla única v29 con cierre oral suavizado y ambos párpados.',
       )
     }
   } finally {
@@ -50,7 +50,7 @@ async function validateOfficialRig(blob: Blob): Promise<void> {
   const fingerprint = await sha256(blob)
   if (fingerprint !== OFFICIAL_MODEL_SHA256) {
     throw new Error(
-      'El archivo no corresponde al Dragón Blanco v28 de una sola malla con cierre neutro corregido.',
+      'El archivo no corresponde al Dragón Blanco v29 de una sola malla con neutral oral suavizado.',
     )
   }
 
@@ -72,11 +72,11 @@ export function MainDragonInstaller() {
 
         if (!stored) {
           setState('needed')
-          setMessage('Instala el dragón v28: una sola malla Abierto_Dragon con cierre neutro limpio y párpados nativos.')
+          setMessage('Instala el dragón v29: una sola malla Abierto_Dragon con neutral oral suavizado y párpados nativos.')
           return
         }
 
-        setMessage('Verificando el GLB v28, el sello neutro corregido y ambos párpados…')
+        setMessage('Verificando el GLB v29, el neutral oral suavizado y ambos párpados…')
 
         try {
           await validateOfficialRig(stored.blob)
@@ -86,7 +86,7 @@ export function MainDragonInstaller() {
 
           setState('needed')
           setMessage(
-            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v28.',
+            'FaceCam retiró el GLB anterior sin borrar tu calibración. Selecciona el archivo v29.',
           )
 
           window.setTimeout(() => window.location.reload(), 450)
@@ -98,7 +98,7 @@ export function MainDragonInstaller() {
       } catch (error) {
         if (cancelled) return
         setState('needed')
-        setMessage('FaceCam necesita instalar el Dragón Blanco v28 en este navegador.')
+        setMessage('FaceCam necesita instalar el Dragón Blanco v29 en este navegador.')
         console.warn('No fue posible validar el dragón guardado.', error)
       }
     }
@@ -126,11 +126,11 @@ export function MainDragonInstaller() {
     if (!file) return
 
     setState('installing')
-    setMessage('Verificando el GLB v28 sin modificar tu calibración ni la lógica de ojos…')
+    setMessage('Verificando el GLB v29 sin modificar tu calibración ni la lógica de ojos…')
 
     try {
       await install(file)
-      setMessage('Dragón v28 instalado. Reiniciando FaceCam con el cierre neutro corregido…')
+      setMessage('Dragón v29 instalado. Reiniciando FaceCam con el neutral oral suavizado…')
       window.setTimeout(() => window.location.reload(), 450)
     } catch (error) {
       setState('error')
@@ -165,7 +165,7 @@ export function MainDragonInstaller() {
     >
       <p className="eyebrow" style={{ margin: 0 }}>REPARACIÓN DEL DRAGÓN</p>
       <strong style={{ display: 'block', marginTop: '0.35rem' }}>
-        Dragón Blanco v28 · una sola malla + neutral corregido
+        Dragón Blanco v29 · una sola malla + neutral oral suavizado
       </strong>
       <p style={{ margin: '0.55rem 0 0.8rem', lineHeight: 1.45 }}>{message}</p>
 
@@ -187,7 +187,7 @@ export function MainDragonInstaller() {
           ? 'Instalando…'
           : state === 'error'
             ? 'Seleccionar otro archivo'
-            : 'Seleccionar dragón v28'}
+            : 'Seleccionar dragón v29'}
       </button>
     </aside>
   )
