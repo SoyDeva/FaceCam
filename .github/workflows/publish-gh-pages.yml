@@ -50,32 +50,32 @@ jobs:
         env:
           VITE_FACECAM_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-      - name: Verify GLB v27 single-source installer bundle
+      - name: Verify GLB v28 corrected-neutral installer bundle
         run: |
           set -euo pipefail
-          obsolete='FaceCam-Dragon-Blanco-HYBRID-v26.glb'
-          corrected='El modelo guardado no activó la malla única con cerrado neutro y ambos párpados del Dragón Blanco v27.'
-          model='FaceCam-Dragon-Blanco-HYBRID-v27.glb'
-          fingerprint='8a70cd93b518745f99ac12764c626a64bd1db996da9d32ccee51549a794fb0e8'
+          obsolete='FaceCam-Dragon-Blanco-HYBRID-v27.glb'
+          corrected='El modelo guardado no activó la malla única v28 con sello neutro corregido y ambos párpados.'
+          model='FaceCam-Dragon-Blanco-HYBRID-v28.glb'
+          fingerprint='8a5bf57dec3b17f0ae664ed7c37ae399c008820a72643efc6a5d03b655563692'
           singleSource='FaceCamSingleSourceDragon'
 
           if grep -R -Fq "$obsolete" dist; then
-            echo "::error::El paquete todavía solicita el GLB v26 de dos fuentes completas."
+            echo "::error::El paquete todavía solicita el GLB v27 con el neutral defectuoso."
             exit 1
           fi
 
           if ! grep -R -Fq "$corrected" dist; then
-            echo "::error::El paquete no contiene la validación de malla única v27."
+            echo "::error::El paquete no contiene la validación del neutral corregido v28."
             exit 1
           fi
 
           if ! grep -R -Fq "$model" dist; then
-            echo "::error::El paquete no solicita el GLB v27 oficial."
+            echo "::error::El paquete no solicita el GLB v28 oficial."
             exit 1
           fi
 
           if ! grep -R -Fq "$fingerprint" dist; then
-            echo "::error::El paquete no contiene la huella SHA-256 del GLB v27."
+            echo "::error::El paquete no contiene la huella SHA-256 del GLB v28."
             exit 1
           fi
 
@@ -86,7 +86,7 @@ jobs:
 
           for discardedNode in FaceCamNeutralHead FaceCamNeutralMouth FaceCamOpenFullSource FaceCamNeutralUpperSeam FaceCamNeutralUpperMuzzle FaceCamUpperMuzzleBridge; do
             if grep -R -Fq "$discardedNode" dist; then
-              echo "::error::El paquete v27 todavía contiene un nodo multi-topología descartado: $discardedNode."
+              echo "::error::El paquete v28 todavía contiene un nodo multi-topología descartado: $discardedNode."
               exit 1
             fi
           done
