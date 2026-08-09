@@ -4,17 +4,17 @@ import { StaticDragonRenderer } from './StaticDragonRenderer'
 
 const SINGLE_SOURCE_NODE_NAME = 'FaceCamSingleSourceDragon'
 
-// v28 keeps the v27 one-topology architecture: the complete authoritative
-// Abierto_Dragon.glb source is the only visible dragon. Its jawOpen-named morph
-// is intentionally a neutral-close target: weight 1 is the corrected neutral
-// seal and weight 0 is the exact authored open source. v28 changes only that
-// closed target geometry; there is still no topology switch, seam or bridge.
+// v29 keeps one visible topology: the complete authoritative Abierto_Dragon.glb
+// source. The jawOpen-named morph is a neutral-close target whose displacement
+// was rebuilt as a smooth spatial oral field against the authoritative neutral
+// reference. Nearby disconnected oral islands therefore move coherently instead
+// of producing the block, dark hole and corner shards seen in v27/v28.
 export const SINGLE_SOURCE_JAW_DEADZONE = 0.025
 export const SINGLE_SOURCE_JAW_FULL = 0.68
 
-// StaticDragonRenderer currently applies a 1.22 response gain to its jawOpen
-// semantic. Compensate here so the actual morph influence remains exactly the
-// closeWeight resolved below. This does not affect blink/gaze/tracking values.
+// StaticDragonRenderer applies a 1.22 response gain to its jawOpen semantic.
+// Compensate here so the actual morph influence remains exactly closeWeight.
+// Blink/gaze/tracking values pass through unchanged.
 export const SINGLE_SOURCE_RENDERER_JAW_GAIN = 1.22
 
 interface RendererPrototype {
@@ -27,7 +27,7 @@ interface RendererPrivateView {
 }
 
 const activeRenderers = new WeakSet<StaticDragonRenderer>()
-const patchMarker = Symbol.for('facecam.singleSourceRuntime.v28')
+const patchMarker = Symbol.for('facecam.singleSourceRuntime.v29')
 const prototype = StaticDragonRenderer.prototype as unknown as RendererPrototype & Record<PropertyKey, unknown>
 
 function clamp01(value: number): number {
@@ -85,8 +85,8 @@ function installSingleSourceRuntime(): void {
     sourceRoot.visible = true
 
     activeRenderers.add(this)
-    // originalLoad briefly applies jawOpen=0 before the v28 node is identified;
-    // force the single source into its corrected neutral-close pose afterward.
+    // originalLoad briefly applies jawOpen=0 before the v29 node is identified;
+    // force the single source into the corrected neutral-close pose afterward.
     originalApplyExpression.call(this, neutralExpression())
   }
 
@@ -101,8 +101,6 @@ function installSingleSourceRuntime(): void {
     const resolved = resolveSingleSourceJaw(expression.jawOpen)
     originalApplyExpression.call(this, {
       ...expression,
-      // Only the mouth semantic is inverted. Both blink values pass through
-      // unchanged so the approved live eye estimator remains untouched.
       jawOpen: resolved.rendererJawValue,
     })
   }
