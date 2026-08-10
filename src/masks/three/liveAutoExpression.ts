@@ -23,16 +23,16 @@ interface MouthAutoState {
 
 const TRACKING_RESET_MS = 6_000
 const EYE_BASELINE_MIN = 0.075
-const EYE_OPEN_VETO_RATIO = 0.93
-const EYE_RAW_BLINK_START = 0.34
-const EYE_RAW_BLINK_FULL = 0.80
-const LIVE_JAW_MAX = 0.68
-const LIVE_BLINK_CLOSE_ALPHA = 0.90
-const LIVE_BLINK_OPEN_ALPHA = 0.60
-const LIVE_JAW_OPEN_ALPHA = 0.68
-const LIVE_JAW_CLOSE_ALPHA = 0.80
-const LIVE_JAW_FULL_DELTA = 0.70
-const LIVE_LIP_FULL_DELTA = 0.115
+const EYE_OPEN_VETO_RATIO = 0.96
+const EYE_RAW_BLINK_START = 0.30
+const EYE_RAW_BLINK_FULL = 0.78
+const LIVE_JAW_MAX = 0.82
+const LIVE_BLINK_CLOSE_ALPHA = 0.94
+const LIVE_BLINK_OPEN_ALPHA = 0.68
+const LIVE_JAW_OPEN_ALPHA = 0.82
+const LIVE_JAW_CLOSE_ALPHA = 0.86
+const LIVE_JAW_FULL_DELTA = 0.62
+const LIVE_LIP_FULL_DELTA = 0.075
 
 const eyes: Record<EyeSide, EyeAutoState> = {
   left: { openBaseline: 0, lastOpening: 0, lastSeenAt: 0, stableFrames: 0 },
@@ -89,7 +89,7 @@ function rawBlinkEvidence(rawBlink: number): number {
   if (!Number.isFinite(rawBlink) || rawBlink <= EYE_RAW_BLINK_START) return 0
   return clamp(Math.pow(
     smoothstep(EYE_RAW_BLINK_START, EYE_RAW_BLINK_FULL, rawBlink),
-    0.72,
+    0.68,
   ))
 }
 
@@ -111,7 +111,7 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
   state.lastOpening = opening
   state.lastSeenAt = now
 
-  if (opening >= 0.065 && stableDelta <= 0.055 && rawBlink < 0.36) {
+  if (opening >= 0.065 && stableDelta <= 0.05 && rawBlink < 0.34) {
     state.stableFrames += 1
   } else {
     state.stableFrames = 0
@@ -120,7 +120,7 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
   const rawEvidence = rawBlinkEvidence(rawBlink)
 
   if (state.openBaseline <= 0) {
-    if (opening >= EYE_BASELINE_MIN && rawBlink < 0.58) {
+    if (opening >= EYE_BASELINE_MIN && rawBlink < 0.55) {
       state.openBaseline = opening
       return 0
     }
@@ -129,35 +129,43 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
 
   let baseline = Math.max(0.0001, state.openBaseline)
 
-  if (opening > baseline && rawBlink < 0.52) {
-    state.openBaseline = lerp(baseline, opening, 0.10)
+  // Only a larger opening is allowed to raise the open-eye reference quickly.
+  // Never chase a closing eyelid downward during a blink.
+  if (opening > baseline && rawBlink < 0.50) {
+    state.openBaseline = lerp(baseline, opening, 0.08)
     baseline = state.openBaseline
   }
 
   let ratio = opening / baseline
 
+  // Long-term adaptation to a slightly smaller natural resting aperture is
+  // deliberately extremely slow and only happens on clearly neutral frames.
   if (
     opening < baseline
-    && ratio >= 0.90
-    && state.stableFrames >= 10
-    && rawBlink < 0.30
+    && ratio >= 0.92
+    && state.stableFrames >= 14
+    && rawBlink < 0.26
   ) {
-    state.openBaseline = lerp(baseline, opening, 0.003)
+    state.openBaseline = lerp(baseline, opening, 0.0015)
     baseline = state.openBaseline
     ratio = opening / Math.max(0.0001, baseline)
   }
 
-  if (ratio >= EYE_OPEN_VETO_RATIO && rawEvidence < 0.55) return 0
+  // A nearly fully open eye vetoes ordinary MediaPipe blink noise. Once the
+  // eyelid starts closing, geometry is allowed to contribute immediately.
+  if (ratio >= EYE_OPEN_VETO_RATIO && rawEvidence < 0.60) return 0
 
-  const geometricClosure = 1 - smoothstep(0.34, 0.90, ratio)
+  const geometricClosure = 1 - smoothstep(0.42, 0.96, ratio)
   const rapidDrop = previousOpening > 0
     ? clamp((previousOpening - opening) / baseline)
     : 0
-  const temporalEvidence = smoothstep(0.08, 0.30, rapidDrop)
+  const temporalEvidence = smoothstep(0.07, 0.26, rapidDrop)
+
+  if (ratio >= 0.90 && rawEvidence < 0.10 && temporalEvidence < 0.08) return 0
 
   const candidate = Math.max(geometricClosure, rawEvidence, temporalEvidence)
-  if (candidate < 0.025) return 0
-  return clamp(Math.pow(candidate, 0.72))
+  if (candidate < 0.03) return 0
+  return clamp(Math.pow(candidate, 0.62))
 }
 
 function updateMouthNeutral(jawOpen: number, lipOpening: number, mouthClose: number): void {
@@ -208,20 +216,28 @@ function autoJawOpen(
   const jawDelta = Math.max(0, jawOpen - jawNeutral)
   const lipDelta = Math.max(0, lipOpening - lipNeutral)
 
+  // Closed inner lips remain authoritative against false jawOpen spikes.
   if (lipDelta <= 0.0028 && lipOpening <= lipNeutral + 0.0045) return 0
   if (jawDelta <= 0.010 && lipDelta <= 0.0045) return 0
 
   const jawEvidence = clamp(
-    (jawDelta - 0.015) / Math.max(0.0001, LIVE_JAW_FULL_DELTA - 0.015),
+    (jawDelta - 0.010) / Math.max(0.0001, LIVE_JAW_FULL_DELTA - 0.010),
   )
   const lipEvidence = clamp(
-    (lipDelta - 0.003) / Math.max(0.0001, LIVE_LIP_FULL_DELTA - 0.003),
+    (lipDelta - 0.0025) / Math.max(0.0001, LIVE_LIP_FULL_DELTA - 0.0025),
   )
-  const supportedLip = Math.min(lipEvidence, jawEvidence * 1.25 + 0.05)
-  const combined = jawEvidence * 0.88 + supportedLip * 0.12
 
-  if (combined < 0.025) return 0
-  return clamp(Math.pow(combined, 0.80) * LIVE_JAW_MAX, 0, LIVE_JAW_MAX)
+  // v31: ordinary speech must visibly articulate the dragon. Lip aperture has
+  // much more authority than in v30, but it still needs plausible jaw support
+  // so camera noise cannot open the mouth by itself.
+  const supportedLip = Math.min(lipEvidence, jawEvidence * 2.2 + 0.16)
+  const combined = jawEvidence * 0.58 + supportedLip * 0.42
+
+  if (combined < 0.018) return 0
+
+  const speechCurve = Math.pow(combined, 0.60) * 0.78
+  const wideOpenReserve = smoothstep(0.72, 1, combined) * 0.04
+  return clamp(speechCurve + wideOpenReserve, 0, LIVE_JAW_MAX)
 }
 
 function harmonizedBlinkTargets(
