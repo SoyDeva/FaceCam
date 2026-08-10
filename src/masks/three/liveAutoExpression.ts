@@ -129,8 +129,6 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
 
   let baseline = Math.max(0.0001, state.openBaseline)
 
-  // Only a larger opening is allowed to raise the open-eye reference quickly.
-  // Never chase a closing eyelid downward during a blink.
   if (opening > baseline && rawBlink < 0.50) {
     state.openBaseline = lerp(baseline, opening, 0.08)
     baseline = state.openBaseline
@@ -138,8 +136,6 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
 
   let ratio = opening / baseline
 
-  // Long-term adaptation to a slightly smaller natural resting aperture is
-  // deliberately extremely slow and only happens on clearly neutral frames.
   if (
     opening < baseline
     && ratio >= 0.92
@@ -151,8 +147,6 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
     ratio = opening / Math.max(0.0001, baseline)
   }
 
-  // A nearly fully open eye vetoes ordinary MediaPipe blink noise. Once the
-  // eyelid starts closing, geometry is allowed to contribute immediately.
   if (ratio >= EYE_OPEN_VETO_RATIO && rawEvidence < 0.60) return 0
 
   const geometricClosure = 1 - smoothstep(0.42, 0.96, ratio)
@@ -164,7 +158,7 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
   if (ratio >= 0.935 && rawEvidence < 0.10 && temporalEvidence < 0.08) return 0
 
   const candidate = Math.max(geometricClosure, rawEvidence, temporalEvidence)
-  if (candidate < 0.03) return 0
+  if (candidate < 0.018) return 0
   return clamp(Math.pow(candidate, 0.62))
 }
 
@@ -216,7 +210,6 @@ function autoJawOpen(
   const jawDelta = Math.max(0, jawOpen - jawNeutral)
   const lipDelta = Math.max(0, lipOpening - lipNeutral)
 
-  // Closed inner lips remain authoritative against false jawOpen spikes.
   if (lipDelta <= 0.0028 && lipOpening <= lipNeutral + 0.0045) return 0
   if (jawDelta <= 0.010 && lipDelta <= 0.0045) return 0
 
@@ -227,9 +220,6 @@ function autoJawOpen(
     (lipDelta - 0.0025) / Math.max(0.0001, LIVE_LIP_FULL_DELTA - 0.0025),
   )
 
-  // v31: ordinary speech must visibly articulate the dragon. Lip aperture has
-  // much more authority than in v30, but it still needs plausible jaw support
-  // so camera noise cannot open the mouth by itself.
   const supportedLip = Math.min(lipEvidence, jawEvidence * 2.2 + 0.16)
   const combined = jawEvidence * 0.58 + supportedLip * 0.42
 
