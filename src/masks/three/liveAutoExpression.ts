@@ -120,23 +120,15 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
   const rawEvidence = rawBlinkEvidence(rawBlink)
 
   if (state.openBaseline <= 0) {
-    // The first clear open-eye frame becomes the personal baseline. Raw blink
-    // noise around 0.15-0.35 is deliberately ignored here; the user's recent
-    // captures show exactly that range while the eyes are visibly open.
     if (opening >= EYE_BASELINE_MIN && rawBlink < 0.58) {
       state.openBaseline = opening
       return 0
     }
-
-    // If tracking starts during a blink, only strong MediaPipe evidence is
-    // trusted until an open-eye baseline becomes available.
     return rawEvidence >= 0.72 ? rawEvidence : 0
   }
 
   let baseline = Math.max(0.0001, state.openBaseline)
 
-  // Learn wider openings, but do not chase a closing eyelid downward. The old
-  // downward adaptation was the main reason slow blinks could remain static.
   if (opening > baseline && rawBlink < 0.52) {
     state.openBaseline = lerp(baseline, opening, 0.10)
     baseline = state.openBaseline
@@ -144,8 +136,6 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
 
   let ratio = opening / baseline
 
-  // A tiny downward correction is allowed only after many stable, clearly-open
-  // frames. This accommodates pose drift without redefining a blink as neutral.
   if (
     opening < baseline
     && ratio >= 0.90
@@ -157,8 +147,6 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
     ratio = opening / Math.max(0.0001, baseline)
   }
 
-  // Geometry that is still essentially open vetoes ordinary blendshape noise.
-  // A genuinely strong blink score can nevertheless begin closing immediately.
   if (ratio >= EYE_OPEN_VETO_RATIO && rawEvidence < 0.55) return 0
 
   const geometricClosure = 1 - smoothstep(0.34, 0.90, ratio)
@@ -200,8 +188,6 @@ function updateMouthNeutral(jawOpen: number, lipOpening: number, mouthClose: num
     return
   }
 
-  // Follow ordinary rest quickly downward, but never let a brief open-mouth
-  // frame redefine neutral upward.
   const jawAlpha = jawOpen <= mouth.jawNeutral ? 0.16 : 0.018
   const lipAlpha = lipOpening <= mouth.lipNeutral ? 0.16 : 0.018
   mouth.jawNeutral = lerp(mouth.jawNeutral, jawOpen, jawAlpha)
@@ -222,16 +208,9 @@ function autoJawOpen(
   const jawDelta = Math.max(0, jawOpen - jawNeutral)
   const lipDelta = Math.max(0, lipOpening - lipNeutral)
 
-  // The inner-lip gap remains the hard veto for false jawOpen spikes caused by
-  // head motion. Eye blinks no longer force the mouth closed; both channels are
-  // independent now.
   if (lipDelta <= 0.0028 && lipOpening <= lipNeutral + 0.0045) return 0
   if (jawDelta <= 0.010 && lipDelta <= 0.0045) return 0
 
-  // MediaPipe jawOpen is used as the primary continuous signal. The old map
-  // saturated around jawOpen 0.15, so ordinary speech looked fully open. The
-  // new range keeps ~0.41 around a strong-but-not-maximal opening and reserves
-  // the last part of the GLB travel for ~0.53-0.70 readings.
   const jawEvidence = clamp(
     (jawDelta - 0.015) / Math.max(0.0001, LIVE_JAW_FULL_DELTA - 0.015),
   )
@@ -253,8 +232,6 @@ function harmonizedBlinkTargets(
   if (!bilateral) return { left, right }
 
   const mean = (left + right) / 2
-  // During a real bilateral blink, reduce small detector asymmetries without
-  // destroying intentional one-eye winks.
   return {
     left: lerp(left, mean, 0.38),
     right: lerp(right, mean, 0.38),
@@ -268,7 +245,7 @@ function stableJawTarget(previous: number, candidate: number): number {
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.025 && candidate <= 0.035) return 0
+  if (previous < 0.025 && candidate <= 0.08) return 0
   if (previous >= 0.025 && candidate < 0.015) return 0
   return clamp(candidate)
 }
