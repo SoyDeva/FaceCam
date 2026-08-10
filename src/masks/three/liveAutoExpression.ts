@@ -161,7 +161,7 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
     : 0
   const temporalEvidence = smoothstep(0.07, 0.26, rapidDrop)
 
-  if (ratio >= 0.90 && rawEvidence < 0.10 && temporalEvidence < 0.08) return 0
+  if (ratio >= 0.935 && rawEvidence < 0.10 && temporalEvidence < 0.08) return 0
 
   const candidate = Math.max(geometricClosure, rawEvidence, temporalEvidence)
   if (candidate < 0.03) return 0
