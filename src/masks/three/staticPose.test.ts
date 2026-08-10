@@ -45,7 +45,8 @@ function resultWithLandmarks(options: {
   landmarks[263] = landmark(centerX + eyeDx + 0.02, centerY + eyeDy)
   landmarks[1] = landmark(centerX, centerY)
 
-  // Expression geometry required by the live auto estimator.
+  // Expression geometry required by the live auto estimator. Preserve the
+  // pose-defining outer/inner eye landmarks above so roll/yaw tests remain real.
   landmarks[61] = landmark(centerX - 0.08, centerY + 0.07)
   landmarks[291] = landmark(centerX + 0.08, centerY + 0.07)
   landmarks[13] = landmark(centerX, centerY + 0.068)
@@ -56,20 +57,21 @@ function resultWithLandmarks(options: {
     inner: number,
     upper: readonly [number, number, number],
     lower: readonly [number, number, number],
-    eyeCenterX: number,
   ) => {
-    const width = 0.04
+    const outerPoint = landmarks[outer]
+    const innerPoint = landmarks[inner]
+    const width = Math.hypot(innerPoint.x - outerPoint.x, innerPoint.y - outerPoint.y)
+    const eyeCenterX = (outerPoint.x + innerPoint.x) / 2
+    const eyeCenterY = (outerPoint.y + innerPoint.y) / 2
     const gap = 0.14 * width
-    landmarks[outer] = landmark(eyeCenterX - width / 2, centerY)
-    landmarks[inner] = landmark(eyeCenterX + width / 2, centerY)
     for (let index = 0; index < 3; index += 1) {
-      const x = eyeCenterX + (index - 1) * 0.005
-      landmarks[upper[index]] = landmark(x, centerY - gap / 2)
-      landmarks[lower[index]] = landmark(x, centerY + gap / 2)
+      const x = eyeCenterX + (index - 1) * width * 0.125
+      landmarks[upper[index]] = landmark(x, eyeCenterY - gap / 2)
+      landmarks[lower[index]] = landmark(x, eyeCenterY + gap / 2)
     }
   }
-  setEyeGeometry(33, 133, [159, 160, 158], [145, 144, 153], centerX - eyeDx)
-  setEyeGeometry(362, 263, [386, 385, 387], [374, 380, 373], centerX + eyeDx)
+  setEyeGeometry(33, 133, [159, 160, 158], [145, 144, 153])
+  setEyeGeometry(362, 263, [386, 385, 387], [374, 380, 373])
 
   return {
     faceLandmarks: [landmarks],
