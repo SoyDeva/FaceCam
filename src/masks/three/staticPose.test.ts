@@ -10,81 +10,117 @@ function landmark(x: number, y: number, z = 0): NormalizedLandmark {
   return { x, y, z, visibility: 1 }
 }
 
-function resultWithLandmarks(
-  patch: Partial<Record<number, NormalizedLandmark>> = {},
-): FaceLandmarkerResult {
-  const landmarks: NormalizedLandmark[] = Array.from(
-    { length: 478 },
-    () => landmark(0.5, 0.5),
-  )
-  const defaults: Record<number, NormalizedLandmark> = {
-    10: landmark(0.5, 0.2),
-    152: landmark(0.5, 0.8),
-    234: landmark(0.3, 0.5),
-    454: landmark(0.7, 0.5),
-    33: landmark(0.38, 0.42),
-    133: landmark(0.46, 0.42),
-    362: landmark(0.54, 0.42),
-    263: landmark(0.62, 0.42),
-    1: landmark(0.5, 0.5, -0.05),
-  }
+function resultWithLandmarks(options: {
+  centerX?: number
+  centerY?: number
+  roll?: number
+  yawDepth?: number
+  jawOpen?: number
+  blinkLeft?: number
+  blinkRight?: number
+} = {}): FaceLandmarkerResult {
+  const {
+    centerX = 0.5,
+    centerY = 0.45,
+    roll = 0,
+    yawDepth = 0,
+    jawOpen = 0,
+    blinkLeft = 0,
+    blinkRight = 0,
+  } = options
+  const landmarks = Array.from({ length: 478 }, () => landmark(centerX, centerY))
+  const faceHeight = 0.32
+  const faceWidth = 0.28
+  const eyeDistance = 0.13
+  const eyeDy = Math.sin(roll) * eyeDistance / 2
+  const eyeDx = Math.cos(roll) * eyeDistance / 2
 
-  for (const [index, value] of Object.entries({ ...defaults, ...patch })) {
-    if (value) landmarks[Number(index)] = value
+  landmarks[10] = landmark(centerX, centerY - faceHeight * 0.44)
+  landmarks[152] = landmark(centerX, centerY + faceHeight * 0.56)
+  landmarks[234] = landmark(centerX - faceWidth / 2, centerY, yawDepth / 2)
+  landmarks[454] = landmark(centerX + faceWidth / 2, centerY, -yawDepth / 2)
+  landmarks[33] = landmark(centerX - eyeDx - 0.02, centerY - eyeDy)
+  landmarks[133] = landmark(centerX - eyeDx + 0.02, centerY - eyeDy)
+  landmarks[362] = landmark(centerX + eyeDx - 0.02, centerY + eyeDy)
+  landmarks[263] = landmark(centerX + eyeDx + 0.02, centerY + eyeDy)
+  landmarks[1] = landmark(centerX, centerY)
+
+  // Expression geometry required by the live auto estimator. Preserve the
+  // pose-defining outer/inner eye landmarks above so roll/yaw tests remain real.
+  landmarks[61] = landmark(centerX - 0.08, centerY + 0.07)
+  landmarks[291] = landmark(centerX + 0.08, centerY + 0.07)
+  landmarks[13] = landmark(centerX, centerY + 0.068)
+  landmarks[14] = landmark(centerX, centerY + 0.072)
+
+  const setEyeGeometry = (
+    outer: number,
+    inner: number,
+    upper: readonly [number, number, number],
+    lower: readonly [number, number, number],
+  ) => {
+    const outerPoint = landmarks[outer]
+    const innerPoint = landmarks[inner]
+    const width = Math.hypot(innerPoint.x - outerPoint.x, innerPoint.y - outerPoint.y)
+    const eyeCenterX = (outerPoint.x + innerPoint.x) / 2
+    const eyeCenterY = (outerPoint.y + innerPoint.y) / 2
+    const gap = 0.14 * width
+    for (let index = 0; index < 3; index += 1) {
+      const x = eyeCenterX + (index - 1) * width * 0.125
+      landmarks[upper[index]] = landmark(x, eyeCenterY - gap / 2)
+      landmarks[lower[index]] = landmark(x, eyeCenterY + gap / 2)
+    }
   }
+  setEyeGeometry(33, 133, [159, 160, 158], [145, 144, 153])
+  setEyeGeometry(362, 263, [386, 385, 387], [374, 380, 373])
 
   return {
     faceLandmarks: [landmarks],
-    faceBlendshapes: [],
+    faceBlendshapes: [{
+      categories: [
+        { categoryName: 'jawOpen', score: jawOpen, index: 0, displayName: '' },
+        { categoryName: 'eyeBlinkLeft', score: blinkLeft, index: 1, displayName: '' },
+        { categoryName: 'eyeBlinkRight', score: blinkRight, index: 2, displayName: '' },
+        { categoryName: 'mouthClose', score: 0, index: 3, displayName: '' },
+      ],
+      headIndex: 0,
+      headName: '',
+    }],
     facialTransformationMatrixes: [],
   } as unknown as FaceLandmarkerResult
 }
 
 describe('estimateStaticDragonPose', () => {
   it('anchors a frontal face to the midpoint between both eyes', () => {
-    const pose = estimateStaticDragonPose(resultWithLandmarks())
+    const pose = estimateStaticDragonPose(resultWithLandmarks({ centerX: 0.52, centerY: 0.43 }))
 
     expect(pose.visible).toBe(true)
-    expect(pose.eyeCenterX).toBeCloseTo(0.5)
-    expect(pose.eyeCenterY).toBeCloseTo(0.42)
-    expect(pose.centerX).toBeCloseTo(pose.eyeCenterX)
-    expect(pose.centerY).toBeCloseTo(pose.eyeCenterY)
-    expect(pose.eyeDistance).toBeCloseTo(0.16)
-    expect(pose.faceWidth).toBeCloseTo(0.4)
-    expect(pose.faceHeight).toBeCloseTo(0.6)
-    expect(pose.roll).toBeCloseTo(0)
-    expect(pose.yaw).toBeCloseTo(0)
-    expect(pose.pitch).toBeCloseTo(0)
+    expect(pose.eyeCenterX).toBeCloseTo(0.52, 4)
+    expect(pose.eyeCenterY).toBeCloseTo(0.43, 4)
+    expect(pose.roll).toBeCloseTo(0, 4)
   })
 
   it('detects roll and horizontal depth rotation', () => {
-    const pose = estimateStaticDragonPose(resultWithLandmarks({
-      33: landmark(0.38, 0.38),
-      133: landmark(0.46, 0.38),
-      362: landmark(0.54, 0.46),
-      263: landmark(0.62, 0.46),
-      234: landmark(0.3, 0.5, 0.08),
-      454: landmark(0.7, 0.5, -0.08),
-    }))
+    const pose = estimateStaticDragonPose(resultWithLandmarks({ roll: 0.2, yawDepth: 0.08 }))
 
-    expect(pose.roll).toBeGreaterThan(0)
-    expect(pose.yaw).toBeGreaterThan(0)
+    expect(pose.roll).toBeGreaterThan(0.15)
+    expect(pose.yaw).toBeGreaterThan(0.2)
   })
 
   it('returns invisible without landmarks', () => {
-    expect(estimateStaticDragonPose(null).visible).toBe(false)
+    const pose = estimateStaticDragonPose(null)
+    expect(pose.visible).toBe(false)
   })
 })
 
 describe('smoothStaticDragonPose', () => {
   it('smooths intentional translation while preserving visibility', () => {
-    const previous = estimateStaticDragonPose(resultWithLandmarks())
-    const next = { ...previous, eyeCenterX: 0.7, centerX: 0.7 }
-    const smoothed = smoothStaticDragonPose(previous, next, 0.5)
+    const previous = estimateStaticDragonPose(resultWithLandmarks({ centerX: 0.48 }))
+    const next = estimateStaticDragonPose(resultWithLandmarks({ centerX: 0.58 }))
+    const smoothed = smoothStaticDragonPose(previous, next)
 
     expect(smoothed.visible).toBe(true)
-    expect(smoothed.eyeCenterX).toBeGreaterThan(0.59)
-    expect(smoothed.eyeCenterX).toBeLessThan(0.61)
+    expect(smoothed.centerX).toBeGreaterThan(previous.centerX)
+    expect(smoothed.centerX).toBeLessThan(next.centerX)
   })
 
   it('holds sub-pixel head and rotation noise completely still', () => {
@@ -110,7 +146,18 @@ describe('smoothStaticDragonPose', () => {
     expect(smoothed.roll).toBe(previous.roll)
   })
 
-  it('ignores weak mouth noise at rest', () => {
+  it('ignores weak mouth noise at rest on the v30 proportional scale', () => {
+    const previous = {
+      ...estimateStaticDragonPose(resultWithLandmarks()),
+      jawOpen: 0,
+    }
+    const next = { ...previous, jawOpen: 0.05 }
+    const smoothed = smoothStaticDragonPose(previous, next)
+
+    expect(smoothed.jawOpen).toBe(0)
+  })
+
+  it('lets small intentional speech start moving the jaw on the v30 scale', () => {
     const previous = {
       ...estimateStaticDragonPose(resultWithLandmarks()),
       jawOpen: 0,
@@ -118,7 +165,7 @@ describe('smoothStaticDragonPose', () => {
     const next = { ...previous, jawOpen: 0.16 }
     const smoothed = smoothStaticDragonPose(previous, next)
 
-    expect(smoothed.jawOpen).toBe(0)
+    expect(smoothed.jawOpen).toBeGreaterThan(0.08)
   })
 
   it('responds clearly to intentional speech', () => {

@@ -77,7 +77,7 @@ function frame({
 describe('automatic live expression calibration', () => {
   beforeEach(() => resetLiveAutoExpressionCalibration())
 
-  it('treats the exact captured open-eye blink noise as neutral', () => {
+  it('treats the captured open-eye blink noise as neutral', () => {
     const expression = estimateLiveAutoDragonExpression(frame())
 
     expect(expression.blinkLeft).toBe(0)
@@ -95,18 +95,79 @@ describe('automatic live expression calibration', () => {
     expect(expression.jawOpen).toBe(0)
   })
 
-  it('opens visibly for ordinary speech after learning neutral automatically', () => {
+  it('uses a proportional speech range instead of saturating around jawOpen 0.11', () => {
     for (let index = 0; index < 4; index += 1) {
       estimateLiveAutoDragonExpression(frame())
     }
 
-    const expression = estimateLiveAutoDragonExpression(frame({
+    const ordinary = estimateLiveAutoDragonExpression(frame({
       jawOpen: 0.11,
       mouthGap: 0.025,
     }))
+    const strong = estimateLiveAutoDragonExpression(frame({
+      jawOpen: 0.412,
+      mouthGap: 0.074,
+    }))
+    const wide = estimateLiveAutoDragonExpression(frame({
+      jawOpen: 0.533,
+      mouthGap: 0.088,
+    }))
 
-    expect(expression.jawOpen).toBeGreaterThan(0.45)
-    expect(expression.jawOpen).toBeLessThanOrEqual(0.82)
+    expect(ordinary.jawOpen).toBeGreaterThan(0.10)
+    expect(ordinary.jawOpen).toBeLessThan(0.22)
+    expect(strong.jawOpen).toBeGreaterThan(ordinary.jawOpen)
+    expect(strong.jawOpen).toBeLessThan(0.52)
+    expect(wide.jawOpen).toBeGreaterThan(strong.jawOpen)
+    expect(wide.jawOpen).toBeLessThanOrEqual(0.68)
+  })
+
+  it('tracks a slow blink from the observed 0.49/0.43 open-eye geometry instead of staying static', () => {
+    for (let index = 0; index < 4; index += 1) {
+      const open = estimateLiveAutoDragonExpression(frame({
+        leftEyeOpening: 0.490,
+        rightEyeOpening: 0.427,
+        leftBlink: 0.274,
+        rightBlink: 0.154,
+      }))
+      expect(open.blinkLeft).toBe(0)
+      expect(open.blinkRight).toBe(0)
+    }
+
+    const beginning = estimateLiveAutoDragonExpression(frame({
+      leftEyeOpening: 0.420,
+      rightEyeOpening: 0.370,
+      leftBlink: 0.380,
+      rightBlink: 0.300,
+    }))
+    expect(beginning.blinkLeft).toBeGreaterThan(0.08)
+    expect(beginning.blinkRight).toBeGreaterThan(0.08)
+
+    const middle = estimateLiveAutoDragonExpression(frame({
+      leftEyeOpening: 0.300,
+      rightEyeOpening: 0.260,
+      leftBlink: 0.550,
+      rightBlink: 0.500,
+    }))
+    expect(middle.blinkLeft).toBeGreaterThan(beginning.blinkLeft)
+    expect(middle.blinkRight).toBeGreaterThan(beginning.blinkRight)
+
+    const closed = estimateLiveAutoDragonExpression(frame({
+      leftEyeOpening: 0.100,
+      rightEyeOpening: 0.090,
+      leftBlink: 0.780,
+      rightBlink: 0.750,
+    }))
+    expect(closed.blinkLeft).toBeGreaterThan(0.9)
+    expect(closed.blinkRight).toBeGreaterThan(0.9)
+
+    const reopened = estimateLiveAutoDragonExpression(frame({
+      leftEyeOpening: 0.490,
+      rightEyeOpening: 0.427,
+      leftBlink: 0.274,
+      rightBlink: 0.154,
+    }))
+    expect(reopened.blinkLeft).toBe(0)
+    expect(reopened.blinkRight).toBe(0)
   })
 
   it('still closes both dragon eyes for a real geometric blink', () => {

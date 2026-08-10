@@ -60,7 +60,7 @@ function mouthFrame(jawOpen: number, mouthGap: number): FaceLandmarkerResult {
 describe('natural live expression motion', () => {
   beforeEach(() => resetLiveAutoExpressionCalibration())
 
-  it('compresses very large live mouth readings instead of saturating the rigid jaw', () => {
+  it('keeps ordinary speech proportional and reserves full travel for a genuinely wide mouth', () => {
     for (let index = 0; index < 4; index += 1) {
       estimateLiveAutoDragonExpression(mouthFrame(0.002, 0.004))
     }
@@ -68,13 +68,14 @@ describe('natural live expression motion', () => {
     const ordinary = estimateLiveAutoDragonExpression(mouthFrame(0.11, 0.025))
     const capturedWide = estimateLiveAutoDragonExpression(mouthFrame(0.578, 0.088))
 
-    expect(ordinary.jawOpen).toBeGreaterThan(0.4)
-    expect(ordinary.jawOpen).toBeLessThan(0.6)
+    expect(ordinary.jawOpen).toBeGreaterThan(0.10)
+    expect(ordinary.jawOpen).toBeLessThan(0.22)
+    expect(capturedWide.jawOpen).toBeGreaterThan(0.55)
     expect(capturedWide.jawOpen).toBeGreaterThan(ordinary.jawOpen)
     expect(capturedWide.jawOpen).toBeLessThanOrEqual(0.68)
   })
 
-  it('closes a blink quickly but not in a one-frame snap, then reopens more gently', () => {
+  it('closes a blink quickly but progressively, then reopens more gently', () => {
     const blinkTarget = {
       ...NEUTRAL_DRAGON_EXPRESSION,
       blinkLeft: 1,
@@ -86,11 +87,11 @@ describe('natural live expression motion', () => {
     const opening1 = smoothLiveAutoDragonExpression(closing2, NEUTRAL_DRAGON_EXPRESSION)
     const opening2 = smoothLiveAutoDragonExpression(opening1, NEUTRAL_DRAGON_EXPRESSION)
 
-    expect(closing1.blinkLeft).toBeGreaterThan(0.75)
-    expect(closing1.blinkLeft).toBeLessThan(0.9)
+    expect(closing1.blinkLeft).toBeGreaterThan(0.85)
+    expect(closing1.blinkLeft).toBeLessThan(0.95)
     expect(closing2.blinkLeft).toBeGreaterThan(closing1.blinkLeft)
     expect(opening1.blinkLeft).toBeLessThan(closing2.blinkLeft)
-    expect(opening1.blinkLeft).toBeGreaterThan(0.35)
+    expect(opening1.blinkLeft).toBeGreaterThan(0.3)
     expect(opening2.blinkLeft).toBeLessThan(opening1.blinkLeft)
     expect(closing1.blinkLeft).toBeCloseTo(closing1.blinkRight)
     expect(opening1.blinkLeft).toBeCloseTo(opening1.blinkRight)
@@ -102,7 +103,7 @@ describe('natural live expression motion', () => {
       blinkLeft: 1,
       blinkRight: 0,
     })
-    expect(wink.blinkLeft).toBeGreaterThan(0.75)
+    expect(wink.blinkLeft).toBeGreaterThan(0.85)
     expect(wink.blinkRight).toBe(0)
 
     const bilateral = smoothLiveAutoDragonExpression(NEUTRAL_DRAGON_EXPRESSION, {
@@ -111,5 +112,23 @@ describe('natural live expression motion', () => {
       blinkRight: 0.7,
     })
     expect(Math.abs(bilateral.blinkLeft - bilateral.blinkRight)).toBeLessThan(0.18)
+  })
+
+  it('does not force the mouth closed merely because both eyes blink', () => {
+    const speaking = {
+      ...NEUTRAL_DRAGON_EXPRESSION,
+      jawOpen: 0.4,
+    }
+    const speakingAndBlinking = {
+      ...speaking,
+      blinkLeft: 1,
+      blinkRight: 1,
+    }
+
+    const smoothed = smoothLiveAutoDragonExpression(speaking, speakingAndBlinking)
+
+    expect(smoothed.jawOpen).toBeCloseTo(0.4, 6)
+    expect(smoothed.blinkLeft).toBeGreaterThan(0.85)
+    expect(smoothed.blinkRight).toBeGreaterThan(0.85)
   })
 })
