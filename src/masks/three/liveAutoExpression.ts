@@ -22,13 +22,17 @@ interface MouthAutoState {
 }
 
 const TRACKING_RESET_MS = 6_000
-const ABSOLUTELY_OPEN_EYE = 0.16
-const OPEN_RATIO = 0.80
+const EYE_BASELINE_MIN = 0.075
+const EYE_OPEN_VETO_RATIO = 0.93
+const EYE_RAW_BLINK_START = 0.34
+const EYE_RAW_BLINK_FULL = 0.80
 const LIVE_JAW_MAX = 0.68
-const LIVE_BLINK_CLOSE_ALPHA = 0.82
-const LIVE_BLINK_OPEN_ALPHA = 0.46
+const LIVE_BLINK_CLOSE_ALPHA = 0.90
+const LIVE_BLINK_OPEN_ALPHA = 0.60
 const LIVE_JAW_OPEN_ALPHA = 0.68
-const LIVE_JAW_CLOSE_ALPHA = 0.72
+const LIVE_JAW_CLOSE_ALPHA = 0.80
+const LIVE_JAW_FULL_DELTA = 0.70
+const LIVE_LIP_FULL_DELTA = 0.115
 
 const eyes: Record<EyeSide, EyeAutoState> = {
   left: { openBaseline: 0, lastOpening: 0, lastSeenAt: 0, stableFrames: 0 },
@@ -81,6 +85,14 @@ export function resetLiveAutoExpressionCalibration(): void {
   }
 }
 
+function rawBlinkEvidence(rawBlink: number): number {
+  if (!Number.isFinite(rawBlink) || rawBlink <= EYE_RAW_BLINK_START) return 0
+  return clamp(Math.pow(
+    smoothstep(EYE_RAW_BLINK_START, EYE_RAW_BLINK_FULL, rawBlink),
+    0.72,
+  ))
+}
+
 function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
   if (!Number.isFinite(opening) || opening <= 0) return 0
 
@@ -99,67 +111,65 @@ function autoBlink(side: EyeSide, opening: number, rawBlink: number): number {
   state.lastOpening = opening
   state.lastSeenAt = now
 
-  if (opening >= 0.065 && stableDelta <= 0.07 && rawBlink < 0.72) {
+  if (opening >= 0.065 && stableDelta <= 0.055 && rawBlink < 0.36) {
     state.stableFrames += 1
   } else {
     state.stableFrames = 0
   }
 
-  // Strong geometric opening is authoritative. This specifically protects
-  // faces for which MediaPipe reports eyeBlink around 0.25-0.40 at rest.
-  if (opening >= ABSOLUTELY_OPEN_EYE && rawBlink < 0.78) {
-    if (state.openBaseline <= 0) state.openBaseline = opening
-    else state.openBaseline = lerp(state.openBaseline, opening, opening > state.openBaseline ? 0.01 : 0.08)
-    return 0
-  }
+  const rawEvidence = rawBlinkEvidence(rawBlink)
 
   if (state.openBaseline <= 0) {
-    if (state.stableFrames >= 2 || (opening >= 0.075 && rawBlink < 0.48)) {
+    // The first clear open-eye frame becomes the personal baseline. Raw blink
+    // noise around 0.15-0.35 is deliberately ignored here; the user's recent
+    // captures show exactly that range while the eyes are visibly open.
+    if (opening >= EYE_BASELINE_MIN && rawBlink < 0.58) {
       state.openBaseline = opening
       return 0
     }
 
-    // Before a neutral reference exists, only an unmistakable closure is
-    // allowed to move the eyelid. Raw blendshape noise alone is insufficient.
-    if (opening <= 0.055 && rawBlink >= 0.58) {
-      return clamp(Math.pow(Math.max(
-        smoothstep(0.055, 0.025, opening),
-        smoothstep(0.58, 0.88, rawBlink),
-      ), 0.62))
-    }
-    return 0
+    // If tracking starts during a blink, only strong MediaPipe evidence is
+    // trusted until an open-eye baseline becomes available.
+    return rawEvidence >= 0.72 ? rawEvidence : 0
   }
 
-  const baseline = Math.max(0.0001, state.openBaseline)
-  const ratio = opening / baseline
+  let baseline = Math.max(0.0001, state.openBaseline)
 
-  if (ratio >= OPEN_RATIO) {
-    if (rawBlink < 0.7) {
-      const adaptation = opening > baseline ? 0.008 : 0.07
-      state.openBaseline = lerp(baseline, opening, adaptation)
-    }
-    return 0
+  // Learn wider openings, but do not chase a closing eyelid downward. The old
+  // downward adaptation was the main reason slow blinks could remain static.
+  if (opening > baseline && rawBlink < 0.52) {
+    state.openBaseline = lerp(baseline, opening, 0.10)
+    baseline = state.openBaseline
   }
 
-  const geometricClosure = 1 - smoothstep(0.36, 0.78, ratio)
-  const rawEvidence = smoothstep(0.48, 0.86, rawBlink)
+  let ratio = opening / baseline
+
+  // A tiny downward correction is allowed only after many stable, clearly-open
+  // frames. This accommodates pose drift without redefining a blink as neutral.
+  if (
+    opening < baseline
+    && ratio >= 0.90
+    && state.stableFrames >= 10
+    && rawBlink < 0.30
+  ) {
+    state.openBaseline = lerp(baseline, opening, 0.003)
+    baseline = state.openBaseline
+    ratio = opening / Math.max(0.0001, baseline)
+  }
+
+  // Geometry that is still essentially open vetoes ordinary blendshape noise.
+  // A genuinely strong blink score can nevertheless begin closing immediately.
+  if (ratio >= EYE_OPEN_VETO_RATIO && rawEvidence < 0.55) return 0
+
+  const geometricClosure = 1 - smoothstep(0.34, 0.90, ratio)
   const rapidDrop = previousOpening > 0
     ? clamp((previousOpening - opening) / baseline)
     : 0
   const temporalEvidence = smoothstep(0.08, 0.30, rapidDrop)
 
-  // A moderate closure needs corroboration. A very deep geometric closure can
-  // stand on its own so winks continue to work even if blendshapes are weak.
-  if (ratio <= 0.50) {
-    return clamp(Math.pow(Math.max(geometricClosure, rawEvidence, temporalEvidence), 0.60))
-  }
-
-  if (rawEvidence < 0.08 && temporalEvidence < 0.08) return 0
-  return clamp(Math.pow(Math.max(
-    geometricClosure * 0.92,
-    rawEvidence,
-    temporalEvidence,
-  ), 0.64))
+  const candidate = Math.max(geometricClosure, rawEvidence, temporalEvidence)
+  if (candidate < 0.025) return 0
+  return clamp(Math.pow(candidate, 0.72))
 }
 
 function updateMouthNeutral(jawOpen: number, lipOpening: number, mouthClose: number): void {
@@ -202,35 +212,37 @@ function autoJawOpen(
   jawOpen: number,
   lipOpening: number,
   mouthClose: number,
-  bilateralBlink: number,
 ): number {
   updateMouthNeutral(jawOpen, lipOpening, mouthClose)
 
-  if (bilateralBlink >= 0.16 || mouthClose >= 0.62) return 0
+  if (mouthClose >= 0.72) return 0
 
   const jawNeutral = mouth.jawNeutral >= 0 ? mouth.jawNeutral : 0.018
   const lipNeutral = mouth.lipNeutral >= 0 ? mouth.lipNeutral : 0.008
   const jawDelta = Math.max(0, jawOpen - jawNeutral)
   const lipDelta = Math.max(0, lipOpening - lipNeutral)
 
-  // Closed inner lips veto false jawOpen spikes. This is important during
-  // blinks and head motion, when MediaPipe can briefly spike jawOpen.
+  // The inner-lip gap remains the hard veto for false jawOpen spikes caused by
+  // head motion. Eye blinks no longer force the mouth closed; both channels are
+  // independent now.
   if (lipDelta <= 0.0028 && lipOpening <= lipNeutral + 0.0045) return 0
-  if (jawDelta <= 0.012 && lipDelta <= 0.0045) return 0
+  if (jawDelta <= 0.010 && lipDelta <= 0.0045) return 0
 
-  const jawEvidence = smoothstep(0.014, 0.145, jawDelta)
-  const lipEvidence = smoothstep(0.003, 0.034, lipDelta)
-  const supportedLip = Math.min(lipEvidence, jawEvidence * 1.65 + 0.10)
-  const combined = jawEvidence * 0.68 + supportedLip * 0.32
+  // MediaPipe jawOpen is used as the primary continuous signal. The old map
+  // saturated around jawOpen 0.15, so ordinary speech looked fully open. The
+  // new range keeps ~0.41 around a strong-but-not-maximal opening and reserves
+  // the last part of the GLB travel for ~0.53-0.70 readings.
+  const jawEvidence = clamp(
+    (jawDelta - 0.015) / Math.max(0.0001, LIVE_JAW_FULL_DELTA - 0.015),
+  )
+  const lipEvidence = clamp(
+    (lipDelta - 0.003) / Math.max(0.0001, LIVE_LIP_FULL_DELTA - 0.003),
+  )
+  const supportedLip = Math.min(lipEvidence, jawEvidence * 1.25 + 0.05)
+  const combined = jawEvidence * 0.88 + supportedLip * 0.12
 
-  if (combined < 0.075) return 0
-
-  // Conversation should live in the middle of the rigid-jaw travel instead of
-  // saturating it. The last part of the travel is reserved for a genuinely
-  // wide opening, which keeps teeth/tongue exposure and jaw rotation natural.
-  const conversational = Math.pow(combined, 1.28) * 0.60
-  const wideOpenReserve = smoothstep(0.88, 1, combined) * 0.08
-  return clamp(conversational + wideOpenReserve, 0, LIVE_JAW_MAX)
+  if (combined < 0.025) return 0
+  return clamp(Math.pow(combined, 0.80) * LIVE_JAW_MAX, 0, LIVE_JAW_MAX)
 }
 
 function harmonizedBlinkTargets(
@@ -250,14 +262,14 @@ function harmonizedBlinkTargets(
 }
 
 function stableJawTarget(previous: number, candidate: number): number {
-  if (previous < 0.035 && candidate <= 0.16) return 0
-  if (previous >= 0.035 && candidate < 0.10) return 0
+  if (previous < 0.025 && candidate <= 0.055) return 0
+  if (previous >= 0.025 && candidate < 0.025) return 0
   return clamp(candidate, 0, LIVE_JAW_MAX)
 }
 
 function stableBlinkTarget(previous: number, candidate: number): number {
-  if (previous < 0.025 && candidate <= 0.08) return 0
-  if (previous >= 0.025 && candidate < 0.02) return 0
+  if (previous < 0.025 && candidate <= 0.035) return 0
+  if (previous >= 0.025 && candidate < 0.015) return 0
   return clamp(candidate)
 }
 
@@ -270,13 +282,7 @@ export function smoothLiveAutoDragonExpression(
   const harmonized = harmonizedBlinkTargets(next.blinkLeft, next.blinkRight)
   const leftTarget = stableBlinkTarget(previous.blinkLeft, harmonized.left)
   const rightTarget = stableBlinkTarget(previous.blinkRight, harmonized.right)
-  const bilateralBlink = Math.max(
-    Math.min(previous.blinkLeft, previous.blinkRight),
-    Math.min(leftTarget, rightTarget),
-  ) >= 0.16
-  const jawTarget = bilateralBlink
-    ? 0
-    : stableJawTarget(previous.jawOpen, next.jawOpen)
+  const jawTarget = stableJawTarget(previous.jawOpen, next.jawOpen)
 
   const smoothBlink = (previousBlink: number, targetBlink: number) => lerp(
     previousBlink,
@@ -285,13 +291,11 @@ export function smoothLiveAutoDragonExpression(
   )
 
   return {
-    jawOpen: bilateralBlink
-      ? 0
-      : lerp(
-        previous.jawOpen,
-        jawTarget,
-        jawTarget > previous.jawOpen ? LIVE_JAW_OPEN_ALPHA : LIVE_JAW_CLOSE_ALPHA,
-      ),
+    jawOpen: lerp(
+      previous.jawOpen,
+      jawTarget,
+      jawTarget > previous.jawOpen ? LIVE_JAW_OPEN_ALPHA : LIVE_JAW_CLOSE_ALPHA,
+    ),
     blinkLeft: smoothBlink(previous.blinkLeft, leftTarget),
     blinkRight: smoothBlink(previous.blinkRight, rightTarget),
     gazeX: lerp(previous.gazeX, next.gazeX, Math.min(amount, 0.22)),
@@ -309,13 +313,11 @@ export function estimateLiveAutoDragonExpression(
 
   const blinkLeft = autoBlink('left', metrics.leftEyeOpening, metrics.leftBlink)
   const blinkRight = autoBlink('right', metrics.rightEyeOpening, metrics.rightBlink)
-  const bilateralBlink = Math.min(blinkLeft, blinkRight)
   const mouthClose = score(result, 'mouthClose')
   const jawOpen = autoJawOpen(
     metrics.jawOpen,
     metrics.mouthHeight,
     mouthClose,
-    bilateralBlink,
   )
 
   const lookOutLeft = score(result, 'eyeLookOutLeft')
